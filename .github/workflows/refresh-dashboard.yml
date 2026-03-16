@@ -83,12 +83,34 @@ jobs:
       - name: Generate dashboard
         run: python3 fetch_bugs.py
 
-      # ── 6. Commit the updated HTML back to the repo ─────────────────────────
+      # ── 6. Generate cache-busting index.html ────────────────────────────────
+      # index.html redirects to bug_dashboard.html?v=TIMESTAMP so browsers
+      # always fetch the latest version and never serve a stale cached copy.
+      - name: Generate index.html with cache-busting redirect
+        run: |
+          TS=$(date -u +%Y%m%d%H%M%S)
+          cat > index.html <<EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+            <meta http-equiv="Pragma" content="no-cache">
+            <meta http-equiv="Expires" content="0">
+            <meta http-equiv="refresh" content="0; url=bug_dashboard.html?v=${TS}">
+            <title>Bug Dashboard</title>
+          </head>
+          <body>
+            <p>Loading dashboard… <a href="bug_dashboard.html?v=${TS}">Click here if not redirected</a></p>
+          </body>
+          </html>
+          EOF
+
+      # ── 7. Commit the updated HTML back to the repo ─────────────────────────
       - name: Commit updated dashboard
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add bug_dashboard.html
+          git add bug_dashboard.html index.html
           # Only commit if the file actually changed
           git diff --cached --quiet || git commit -m "chore: refresh bug dashboard [skip ci]"
           git push
