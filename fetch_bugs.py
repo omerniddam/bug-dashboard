@@ -2136,7 +2136,7 @@ async function applyGlobalJql() {{
 
   // ── Validation ────────────────────────────────────────────────────────────
   if (!jql)   {{ _gjqlStatus('error', '❌ JQL cannot be empty.'); return; }}
-  if (!token) {{ _gjqlStatus('error', '❌ GitHub token is required.\n\nCreate one at github.com/settings/tokens/new with the "workflow" scope.'); return; }}
+  if (!token) {{ _gjqlStatus('error', '❌ GitHub token is required.\\n\\nCreate one at github.com/settings/tokens/new with the "workflow" scope.'); return; }}
   if (!repo || !repo.includes('/')) {{ _gjqlStatus('error', '❌ Enter a valid GitHub repo in the format  owner/repo-name'); return; }}
 
   // ── Persist to localStorage ───────────────────────────────────────────────
@@ -2166,9 +2166,9 @@ async function applyGlobalJql() {{
     if (res.status === 204) {{
       // 204 No Content = workflow successfully queued
       _gjqlStatus('success',
-        '✅ Refresh triggered successfully!\n\n' +
+        '✅ Refresh triggered successfully!\\n\\n' +
         'The GitHub Actions workflow is now running. It will fetch fresh Jira data using your updated JQL, ' +
-        'regenerate the dashboard, and commit it to the repo.\n\n' +
+        'regenerate the dashboard, and commit it to the repo.\\n\\n' +
         '⏱  Reload this page in ~2 minutes to see the updated data.'
       );
       btn.textContent = '✓ Triggered';
