@@ -404,7 +404,7 @@ def build_html(bugs, timeline, norm_timeline, config, generated_at):
     dash_cfg      = {
         "jira_url":         config["jira_url"],
         "email":            config.get("email", ""),
-        "api_token":        config.get("api_token", ""),
+        # api_token intentionally omitted — never embed secrets in HTML
         "projects":         config.get("projects", ""),
         "bug_jql":          config.get("bug_jql", "(issuetype = Bug OR labels in (bug, jira_escalated))"),
         "resolved_statuses": config.get("resolved_statuses", ["Done", "To be reviewed by the customer"]),
@@ -1810,7 +1810,7 @@ function saveConfigJson(){{
   const cfg = {{
     jira_url:          DASH_CFG.jira_url,
     email:             DASH_CFG.email,
-    api_token:         DASH_CFG.api_token,
+    api_token:         "PASTE_YOUR_API_TOKEN_HERE",  // token not stored in HTML — fill in manually
     projects:          DASH_CFG.projects,
     working_days_per_month: DASH_CFG.working_days,
     resolved_statuses: DASH_CFG.resolved_statuses,
