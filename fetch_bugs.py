@@ -411,6 +411,8 @@ def build_html(bugs, timeline, norm_timeline, config, generated_at):
         "working_days":     config.get("working_days_per_month", 20),
         "generated_at":     generated_at,
         "chart_jql_overrides": config.get("chart_jql_overrides", {}),
+        "github_repo":      config.get("github_repo", ""),
+        "github_workflow":  config.get("github_workflow", "refresh-dashboard.yml"),
     }
     cfg_json = json.dumps(dash_cfg, ensure_ascii=False)
 
@@ -485,8 +487,11 @@ header h1{{font-size:20px;font-weight:700;color:#f1f5f9;flex:1}}
 .form-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:10px}}
 .form-group{{display:flex;flex-direction:column;gap:4px}}
 .form-group label{{font-size:11px;color:#94a3b8;font-weight:500}}
-.form-group select,.form-group input[type=text],.form-group textarea{{background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;padding:6px 8px;font-size:13px;width:100%}}
+.form-group select,.form-group input[type=text],.form-group input[type=password],.form-group input[type=url],.form-group textarea{{background:#0f172a;border:1px solid #334155;border-radius:6px;color:#e2e8f0;padding:6px 8px;font-size:13px;width:100%;box-sizing:border-box}}
 .form-group select:focus,.form-group input:focus,.form-group textarea:focus{{outline:none;border-color:#6366f1}}
+.gjql-status{{display:none;margin-top:10px;padding:10px 12px;border-radius:6px;font-size:12px;border:1px solid;white-space:pre-wrap;word-break:break-word}}
+.gjql-status.success{{background:#052e16;border-color:#16a34a;color:#86efac}}
+.gjql-status.error{{background:#2d1a1a;border-color:#ef4444;color:#fca5a5}}
 textarea.jql-box{{font-family:monospace;font-size:12px;min-height:80px;resize:vertical;line-height:1.5}}
 .jql-note{{font-size:11px;color:#64748b;margin-top:6px;font-style:italic}}
 .copy-btn{{background:#334155;border:1px solid #475569;color:#e2e8f0;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer}}
@@ -531,6 +536,7 @@ body:not(.edit-mode) .edit-only{{display:none!important}}
     <div class="refresh-note">Auto-refreshes daily via scheduled task · run fetch_bugs.py to refresh manually</div>
   </div>
   <button class="btn-edit-mode view-mode" id="edit-mode-btn" onclick="toggleEditMode()" title="Unlock layout editing — drag, resize, rename charts">✏️ Edit Layout</button>
+  <button class="btn-icon edit-only" onclick="openGlobalJql()" title="Edit the global JQL filter and trigger a fresh data fetch" style="font-size:12px;padding:5px 12px">⚙️ Global JQL</button>
   <button class="btn-ghost" onclick="saveConfigJson()" title="Download config.json with saved JQL overrides" style="font-size:12px;padding:5px 12px">💾 Save Config</button>
 </header>
 
@@ -740,6 +746,41 @@ body:not(.edit-mode) .edit-only{{display:none!important}}
       <button class="btn-ghost" onclick="closeModals()">Close</button>
       <button class="btn-ghost" id="jql-reset-btn" onclick="resetChartData(activeJql)" style="display:none;color:#f87171;border-color:#f87171">↩ Reset to Default</button>
       <button class="btn-primary" id="jql-apply-btn" onclick="applyJqlFilter()" style="display:none">Apply &amp; Re-fetch</button>
+    </div>
+  </div>
+</div>
+
+<!-- GLOBAL JQL MODAL -->
+<div class="modal-overlay" id="gjql-overlay">
+  <div class="modal" style="width:620px">
+    <div class="modal-head">
+      <h2>⚙️ Global JQL Filter</h2>
+      <button class="modal-close" onclick="closeModals()">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:12px;color:#94a3b8;margin-bottom:14px;line-height:1.6">
+        This JQL controls <strong>which bugs are fetched from Jira for all charts</strong>.
+        Saving triggers the GitHub Actions workflow to regenerate the dashboard with fresh data.
+        <br><em>Reload this page after ~2 minutes to see updated data.</em>
+      </p>
+      <div class="form-group" style="margin-bottom:12px">
+        <label>Bug JQL Filter</label>
+        <textarea class="jql-box" id="gjql-text" rows="4" style="width:100%;min-height:90px"></textarea>
+        <span class="jql-note">Standard Jira JQL — this becomes the base query that all charts build on top of.</span>
+      </div>
+      <div class="form-group" style="margin-bottom:12px">
+        <label>GitHub Personal Access Token &nbsp;<span style="color:#64748b;font-size:11px;font-weight:400">needs <code style="background:#0f172a;padding:1px 4px;border-radius:3px">workflow</code> scope — stored only in this browser</span></label>
+        <input type="password" id="gjql-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+      </div>
+      <div class="form-group" style="margin-bottom:4px">
+        <label>GitHub Repo &nbsp;<span style="color:#64748b;font-size:11px;font-weight:400">e.g. omerniddam/bug-dashboard</span></label>
+        <input type="text" id="gjql-repo" placeholder="owner/repo-name">
+      </div>
+      <div id="gjql-status" class="gjql-status"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn-primary" id="gjql-apply-btn" onclick="applyGlobalJql()">🔄 Trigger Refresh</button>
     </div>
   </div>
 </div>
@@ -1775,6 +1816,7 @@ function copyJql(){{
 function closeModals(){{
   document.getElementById('edit-overlay').classList.remove('open');
   document.getElementById('jql-overlay').classList.remove('open');
+  document.getElementById('gjql-overlay').classList.remove('open');
 }}
 
 // ─── CHART BADGES ─────────────────────────────────────────────────────────────
@@ -1859,6 +1901,7 @@ if (DASH_CFG.chart_jql_overrides) {{
 
 document.getElementById('edit-overlay').addEventListener('click', e=>{{ if(e.target===e.currentTarget) closeModals(); }});
 document.getElementById('jql-overlay').addEventListener('click', e=>{{ if(e.target===e.currentTarget) closeModals(); }});
+document.getElementById('gjql-overlay').addEventListener('click', e=>{{ if(e.target===e.currentTarget) closeModals(); }});
 document.getElementById('wd-input').addEventListener('change', renderAll);
 document.getElementById('gen-time').textContent = DASH_CFG.generated_at;
 
@@ -2049,6 +2092,101 @@ function loadLayout() {{
 function resetLayout() {{
   try {{ localStorage.removeItem('db_layout_v2'); }} catch(e) {{}}
   location.reload();
+}}
+
+// ── Global JQL modal ─────────────────────────────────────────────────────────
+// Opens the global JQL editor. Pre-fills fields from localStorage or DASH_CFG defaults.
+function openGlobalJql() {{
+  // Restore saved values, fall back to what was baked into the HTML at generation time
+  const savedJql   = (() => {{ try {{ return localStorage.getItem('global_jql'); }} catch(e) {{ return null; }} }})();
+  const savedToken = (() => {{ try {{ return localStorage.getItem('gh_pat');     }} catch(e) {{ return null; }} }})();
+  const savedRepo  = (() => {{ try {{ return localStorage.getItem('gh_repo');    }} catch(e) {{ return null; }} }})();
+
+  document.getElementById('gjql-text').value  = savedJql  || DASH_CFG.bug_jql  || '';
+  document.getElementById('gjql-token').value = savedToken || '';
+  document.getElementById('gjql-repo').value  = savedRepo  || DASH_CFG.github_repo || '';
+
+  // Reset status box
+  const st = document.getElementById('gjql-status');
+  st.className = 'gjql-status'; st.textContent = ''; st.style.display = 'none';
+
+  const btn = document.getElementById('gjql-apply-btn');
+  btn.disabled = false; btn.textContent = '🔄 Trigger Refresh';
+
+  document.getElementById('gjql-overlay').classList.add('open');
+}}
+
+// Shows a status message inside the Global JQL modal.
+function _gjqlStatus(type, msg) {{
+  const el = document.getElementById('gjql-status');
+  el.className = 'gjql-status ' + type;
+  el.textContent = msg;
+  el.style.display = 'block';
+}}
+
+// Validates inputs, persists them, then calls the GitHub Actions API to trigger a workflow_dispatch.
+async function applyGlobalJql() {{
+  const jql   = (document.getElementById('gjql-text').value  || '').trim();
+  const token = (document.getElementById('gjql-token').value || '').trim();
+  const repo  = (document.getElementById('gjql-repo').value  || '').trim();
+  const workflow = DASH_CFG.github_workflow || 'refresh-dashboard.yml';
+
+  // ── Validation ────────────────────────────────────────────────────────────
+  if (!jql)   {{ _gjqlStatus('error', '❌ JQL cannot be empty.'); return; }}
+  if (!token) {{ _gjqlStatus('error', '❌ GitHub token is required.\n\nCreate one at github.com/settings/tokens/new with the "workflow" scope.'); return; }}
+  if (!repo || !repo.includes('/')) {{ _gjqlStatus('error', '❌ Enter a valid GitHub repo in the format  owner/repo-name'); return; }}
+
+  // ── Persist to localStorage ───────────────────────────────────────────────
+  try {{
+    localStorage.setItem('global_jql', jql);
+    localStorage.setItem('gh_pat',     token);
+    localStorage.setItem('gh_repo',    repo);
+  }} catch(e) {{}}
+
+  // ── Trigger GitHub Actions workflow_dispatch ───────────────────────────────
+  const btn = document.getElementById('gjql-apply-btn');
+  btn.disabled = true; btn.textContent = '⏳ Triggering…';
+  _gjqlStatus('', ''); document.getElementById('gjql-status').style.display = 'none';
+
+  try {{
+    const apiUrl = `https://api.github.com/repos/${{repo}}/actions/workflows/${{workflow}}/dispatches`;
+    const res = await fetch(apiUrl, {{
+      method: 'POST',
+      headers: {{
+        'Authorization': `token ${{token}}`,
+        'Accept':        'application/vnd.github.v3+json',
+        'Content-Type':  'application/json',
+      }},
+      body: JSON.stringify({{ ref: 'main', inputs: {{ bug_jql: jql }} }}),
+    }});
+
+    if (res.status === 204) {{
+      // 204 No Content = workflow successfully queued
+      _gjqlStatus('success',
+        '✅ Refresh triggered successfully!\n\n' +
+        'The GitHub Actions workflow is now running. It will fetch fresh Jira data using your updated JQL, ' +
+        'regenerate the dashboard, and commit it to the repo.\n\n' +
+        '⏱  Reload this page in ~2 minutes to see the updated data.'
+      );
+      btn.textContent = '✓ Triggered';
+    }} else {{
+      // Parse GitHub's error response for a helpful message
+      let detail = '';
+      try {{
+        const body = await res.json();
+        detail = body.message ? `\n\n${{body.message}}` : '';
+        if (res.status === 401) detail = '\n\nYour token appears to be invalid or expired. Generate a new one at github.com/settings/tokens/new';
+        if (res.status === 403) detail = '\n\nPermission denied. Make sure your token has the "workflow" scope.';
+        if (res.status === 404) detail = `\n\nWorkflow or repo not found. Check that the repo "${{repo}}" exists and the workflow file is named "${{workflow}}"`;
+        if (res.status === 422) detail = '\n\nUnprocessable — the "main" branch may not exist, or the workflow file is missing the workflow_dispatch trigger.';
+      }} catch(pe) {{}}
+      _gjqlStatus('error', `❌ GitHub API returned HTTP ${{res.status}}${{detail}}`);
+      btn.disabled = false; btn.textContent = '🔄 Trigger Refresh';
+    }}
+  }} catch(netErr) {{
+    _gjqlStatus('error', `❌ Network error: ${{netErr.message}}\n\nCheck your internet connection and try again.`);
+    btn.disabled = false; btn.textContent = '🔄 Trigger Refresh';
+  }}
 }}
 
 // ── Edit mode toggle ──────────────────────────────────────────────────────────

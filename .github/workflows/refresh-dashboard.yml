@@ -5,8 +5,13 @@ on:
   schedule:
     - cron: '0 7 * * *'
 
-  # Also allow manual trigger from the GitHub Actions UI
+  # Allow manual trigger — optionally pass a custom JQL from the dashboard UI
   workflow_dispatch:
+    inputs:
+      bug_jql:
+        description: 'Override bug_jql filter (leave empty to use the default)'
+        required: false
+        default: ''
 
 jobs:
   refresh:
@@ -30,7 +35,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      # ── 4. Write config.json from GitHub Secrets ────────────────────────────
+      # ── 4. Write config.json from GitHub Secrets (+ optional JQL override) ──
       #
       # Add these secrets in:
       #   GitHub repo → Settings → Secrets and variables → Actions → New secret
@@ -41,12 +46,20 @@ jobs:
       #
       - name: Create config.json from secrets
         env:
-          JIRA_URL:       ${{ secrets.JIRA_URL }}
-          JIRA_EMAIL:     ${{ secrets.JIRA_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_URL:        ${{ secrets.JIRA_URL }}
+          JIRA_EMAIL:      ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN:  ${{ secrets.JIRA_API_TOKEN }}
+          BUG_JQL_OVERRIDE: ${{ inputs.bug_jql }}
         run: |
           python3 - <<'EOF'
           import json, os
+          default_jql = "(issuetype = Bug OR labels in (bug, jira_escalated)) and issuetype!=sub-task"
+          jql_override = os.environ.get("BUG_JQL_OVERRIDE", "").strip()
+          effective_jql = jql_override if jql_override else default_jql
+          if jql_override:
+              print(f"  JQL override applied: {jql_override}")
+          else:
+              print(f"  Using default JQL: {effective_jql}")
           cfg = {
             "jira_url":               os.environ["JIRA_URL"],
             "email":                  os.environ["JIRA_EMAIL"],
@@ -55,9 +68,11 @@ jobs:
             "working_days_per_month": 20,
             "resolved_statuses":      ["Done", "To be reviewed by the customer", "Rejected"],
             "in_progress_status":     "In Progress",
-            "bug_jql":                "(issuetype = Bug OR labels in (bug, jira_escalated)) and issuetype!=sub-task",
+            "bug_jql":                effective_jql,
             "team_field":             "customfield_10032",
-            "months_of_history":      6
+            "months_of_history":      6,
+            "github_repo":            "omerniddam/bug-dashboard",
+            "github_workflow":        "refresh-dashboard.yml",
           }
           with open("config.json", "w") as f:
               json.dump(cfg, f, indent=2)
@@ -79,12 +94,8 @@ jobs:
           git push
 
       # ── 7. (Optional) Deploy to hosting ─────────────────────────────────────
-      # Uncomment one of these blocks depending on where you host the file.
-
-      # --- Option A: GitHub Pages (serve directly from repo) ---
-      # Enable GitHub Pages in repo Settings → Pages → Source: "Deploy from branch"
-      # Point it at the branch and root folder. No extra step needed here —
-      # the commit above is enough and Pages will pick it up automatically.
+      # GitHub Pages: enable in repo Settings → Pages → Deploy from branch → main / (root)
+      # No extra step needed — the commit above triggers Pages automatically.
 
       # --- Option B: Upload to AWS S3 ---
       # Add secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET
@@ -94,14 +105,4 @@ jobs:
       #     AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       #   run: |
       #     aws s3 cp bug_dashboard.html s3://${{ secrets.S3_BUCKET }}/bug_dashboard.html \
-      #       --content-type text/html \
-      #       --cache-control "max-age=300"
-
-      # --- Option C: Deploy to Netlify ---
-      # Add secret: NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID
-      # - name: Deploy to Netlify
-      #   run: |
-      #     npm install -g netlify-cli
-      #     netlify deploy --prod --dir=. --filter bug_dashboard.html \
-      #       --auth ${{ secrets.NETLIFY_AUTH_TOKEN }} \
-      #       --site ${{ secrets.NETLIFY_SITE_ID }}
+      #       --content-type text/html --cache-control "max-age=300"
