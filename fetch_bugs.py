@@ -2178,10 +2178,10 @@ async function applyGlobalJql() {{
       try {{
         const body = await res.json();
         detail = body.message ? `\n\n${{body.message}}` : '';
-        if (res.status === 401) detail = '\n\nYour token appears to be invalid or expired. Generate a new one at github.com/settings/tokens/new';
-        if (res.status === 403) detail = '\n\nPermission denied. Make sure your token has the "workflow" scope.';
-        if (res.status === 404) detail = `\n\nWorkflow or repo not found. Check that the repo "${{repo}}" exists and the workflow file is named "${{workflow}}"`;
-        if (res.status === 422) detail = '\n\nUnprocessable — the "main" branch may not exist, or the workflow file is missing the workflow_dispatch trigger.';
+        if (res.status === 401) detail = '\\n\\nYour token appears to be invalid or expired. Generate a new one at github.com/settings/tokens/new';
+        if (res.status === 403) detail = '\\n\\nPermission denied. Make sure your token has the "workflow" scope.';
+        if (res.status === 404) detail = '\\n\\nWorkflow or repo not found. Check that the repo ' + repo + ' exists and the workflow file is named ' + workflow;
+        if (res.status === 422) detail = '\\n\\nUnprocessable — the main branch may not exist, or the workflow file is missing the workflow_dispatch trigger.';
       }} catch(pe) {{}}
       _gjqlStatus('error', `❌ GitHub API returned HTTP ${{res.status}}${{detail}}`);
       btn.disabled = false; btn.textContent = '🔄 Trigger Refresh';
