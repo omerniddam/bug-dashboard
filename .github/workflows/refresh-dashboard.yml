@@ -1,0 +1,107 @@
+name: Refresh Bug Dashboard
+
+on:
+  # Run automatically every day at 07:00 UTC (adjust to your timezone)
+  schedule:
+    - cron: '0 7 * * *'
+
+  # Also allow manual trigger from the GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to commit the generated HTML back to the repo
+
+    steps:
+      # ── 1. Check out the repo ───────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ────────────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 3. Install dependencies ─────────────────────────────────────────────
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Write config.json from GitHub Secrets ────────────────────────────
+      #
+      # Add these secrets in:
+      #   GitHub repo → Settings → Secrets and variables → Actions → New secret
+      #
+      #   JIRA_URL       → https://oxsecurity.atlassian.net
+      #   JIRA_EMAIL     → omer.niddam@ox.security
+      #   JIRA_API_TOKEN → your Atlassian API token
+      #
+      - name: Create config.json from secrets
+        env:
+          JIRA_URL:       ${{ secrets.JIRA_URL }}
+          JIRA_EMAIL:     ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          cfg = {
+            "jira_url":               os.environ["JIRA_URL"],
+            "email":                  os.environ["JIRA_EMAIL"],
+            "api_token":              os.environ["JIRA_API_TOKEN"],
+            "projects":               "OXDEV",
+            "working_days_per_month": 20,
+            "resolved_statuses":      ["Done", "To be reviewed by the customer", "Rejected"],
+            "in_progress_status":     "In Progress",
+            "bug_jql":                "(issuetype = Bug OR labels in (bug, jira_escalated)) and issuetype!=sub-task",
+            "team_field":             "customfield_10032",
+            "months_of_history":      6
+          }
+          with open("config.json", "w") as f:
+              json.dump(cfg, f, indent=2)
+          print("config.json written")
+          EOF
+
+      # ── 5. Generate the dashboard HTML ──────────────────────────────────────
+      - name: Generate dashboard
+        run: python3 fetch_bugs.py
+
+      # ── 6. Commit the updated HTML back to the repo ─────────────────────────
+      - name: Commit updated dashboard
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add bug_dashboard.html
+          # Only commit if the file actually changed
+          git diff --cached --quiet || git commit -m "chore: refresh bug dashboard [skip ci]"
+          git push
+
+      # ── 7. (Optional) Deploy to hosting ─────────────────────────────────────
+      # Uncomment one of these blocks depending on where you host the file.
+
+      # --- Option A: GitHub Pages (serve directly from repo) ---
+      # Enable GitHub Pages in repo Settings → Pages → Source: "Deploy from branch"
+      # Point it at the branch and root folder. No extra step needed here —
+      # the commit above is enough and Pages will pick it up automatically.
+
+      # --- Option B: Upload to AWS S3 ---
+      # Add secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET
+      # - name: Deploy to S3
+      #   env:
+      #     AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      #     AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      #   run: |
+      #     aws s3 cp bug_dashboard.html s3://${{ secrets.S3_BUCKET }}/bug_dashboard.html \
+      #       --content-type text/html \
+      #       --cache-control "max-age=300"
+
+      # --- Option C: Deploy to Netlify ---
+      # Add secret: NETLIFY_AUTH_TOKEN, NETLIFY_SITE_ID
+      # - name: Deploy to Netlify
+      #   run: |
+      #     npm install -g netlify-cli
+      #     netlify deploy --prod --dir=. --filter bug_dashboard.html \
+      #       --auth ${{ secrets.NETLIFY_AUTH_TOKEN }} \
+      #       --site ${{ secrets.NETLIFY_SITE_ID }}

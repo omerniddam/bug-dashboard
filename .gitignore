@@ -1,0 +1,6 @@
+# Never commit credentials or cached data
+config.json
+dashboard_cache.json
+*.pyc
+__pycache__/
+.DS_Store
