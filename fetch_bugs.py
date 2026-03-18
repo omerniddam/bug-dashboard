@@ -1799,7 +1799,6 @@ function triggerChartRefresh() {{
   closeModals();
   document.getElementById('gjql-overlay').classList.add('open');
 }}
-}}
 
 function resetChartData(chartId){{
   CHART_BUGS[chartId] = null;
