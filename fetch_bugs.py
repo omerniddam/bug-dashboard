@@ -1707,13 +1707,13 @@ function buildJql(chartId){{
   const days = (DASH_CFG.months_of_history || 6) * 31;
   const base = `${{bq}}\nAND project in (${{p}})\nAND created >= -${{days}}d`;
   const jqls = {{
-    c1: `${{base}}\nAND status changed to (${{rs}})\nDURING (${{ms}}, ${{me}})\nORDER BY cf[10032] ASC`,
-    c2: `${{base}}\nAND status changed to (${{rs}})\nDURING (${{ms}}, ${{me}})\nORDER BY assignee ASC`,
-    c3: `${{base}}\nAND status changed to (${{rs}})\nDURING (${{ms}}, ${{me}})\nORDER BY created ASC`,
-    c4: `${{base}}\nAND status changed to (${{rs}})\nDURING (${{ms}}, ${{me}})\nORDER BY priority ASC`,
-    c5: `${{base}}\nORDER BY cf[10032] ASC\n-- Open:  AND status NOT IN (${{rs}})\n-- Closed: AND status IN (${{rs}})`,
-    c6: `${{base}}\n-- Open on date D: created <= D AND (resolution is EMPTY OR resolved > D)\nORDER BY created ASC`,
-    c7: `${{base}}\nAND status changed to (${{rs}})\nDURING (${{ms}}, ${{me}})\nORDER BY cf[10032] ASC, priority ASC`,
+    c1: `${{base}}\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\nORDER BY cf[10032] ASC`,
+    c2: `${{base}}\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\nORDER BY assignee ASC`,
+    c3: `${{base}}\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\nORDER BY created ASC`,
+    c4: `${{base}}\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\nORDER BY priority ASC`,
+    c5: `${{base}}\nORDER BY cf[10032] ASC\n-- Open:  AND resolution is EMPTY\n-- Closed: AND resolution is not EMPTY`,
+    c6: `${{base}}\n-- Open on date D: created <= D AND (resolution is EMPTY OR resolutiondate > D)\nORDER BY created ASC`,
+    c7: `${{base}}\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\nORDER BY cf[10032] ASC, priority ASC`,
   }};
   return jqls[chartId] || '';
 }}
@@ -1783,9 +1783,17 @@ function applyJqlFilter(){{
 
 // Trigger a full GitHub Actions refresh with the current chart's base JQL
 function triggerChartRefresh() {{
-  // Pre-fill global JQL modal with the current chart's base query, then open it
+  // Extract the base JQL from the chart JQL textarea (the part before the auto-generated clauses).
+  // buildJql() always appends "AND project in (...)" on a new line after the bug_jql —
+  // everything before that line IS the base filter that should be sent to the workflow.
+  const chartJql = (document.getElementById('jql-text').value || '').trim();
+  let baseJql = '';
+  const jqlLines = chartJql.split('\\n');
+  const cutIdx  = jqlLines.findIndex(l => /^AND project in /i.test(l.trim()));
+  baseJql = (cutIdx > 0) ? jqlLines.slice(0, cutIdx).join('\\n').trim() : '';
+  // Fall back to saved global JQL or the baked-in default
   const savedJql = (() => {{ try {{ return localStorage.getItem('global_jql'); }} catch(e) {{ return null; }} }})();
-  document.getElementById('gjql-text').value = savedJql || DASH_CFG.bug_jql || '';
+  document.getElementById('gjql-text').value = baseJql || savedJql || DASH_CFG.bug_jql || '';
   const st = document.getElementById('gjql-status');
   st.className = 'gjql-status'; st.textContent = ''; st.style.display = 'none';
   const btn = document.getElementById('gjql-apply-btn');
