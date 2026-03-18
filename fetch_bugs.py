@@ -413,6 +413,7 @@ def build_html(bugs, timeline, norm_timeline, config, generated_at):
         "chart_jql_overrides": config.get("chart_jql_overrides", {}),
         "github_repo":      config.get("github_repo", ""),
         "github_workflow":  config.get("github_workflow", "refresh-dashboard.yml"),
+        "months_of_history": config.get("months_of_history", 6),
     }
     cfg_json = json.dumps(dash_cfg, ensure_ascii=False)
 
@@ -723,6 +724,21 @@ body:not(.edit-mode) .edit-only{{display:none!important}}
   </div>
 </div>
 
+<!-- PASSWORD MODAL -->
+<div class="modal-overlay" id="pw-overlay">
+  <div class="modal" style="width:360px;text-align:center">
+    <h2 style="margin-bottom:20px">Enter Edit Password</h2>
+    <div class="form-group">
+      <input type="password" id="pw-input" placeholder="Password"
+             style="width:100%;text-align:center;font-size:16px;letter-spacing:2px"
+             onkeydown="if(event.key==='Enter')checkEditPassword()">
+    </div>
+    <p id="pw-error" style="color:#f87171;font-size:13px;margin-top:8px;display:none">Incorrect password. Try again.</p>
+    <button class="btn-primary" style="margin-top:16px;width:100%" onclick="checkEditPassword()">Unlock Edit Mode</button>
+    <button class="btn-ghost" style="margin-top:8px;width:100%" onclick="document.getElementById('pw-overlay').classList.remove('open')">Cancel</button>
+  </div>
+</div>
+
 <!-- JQL MODAL -->
 <div class="modal-overlay" id="jql-overlay">
   <div class="modal">
@@ -741,6 +757,23 @@ body:not(.edit-mode) .edit-only{{display:none!important}}
       </div>
       <textarea class="jql-box" id="jql-text" style="width:100%;min-height:100px"></textarea>
       <p class="jql-note" id="jql-note"></p>
+      <details id="jira-creds-details" style="margin-top:16px;border-top:1px solid #1e293b;padding-top:12px">
+        <summary style="cursor:pointer;color:#64748b;font-size:12px;user-select:none">Jira Credentials (one-time setup — stored in your browser)</summary>
+        <div style="margin-top:10px">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Jira Email</label>
+              <input type="email" id="jira-email-input" placeholder="you@company.com">
+            </div>
+            <div class="form-group">
+              <label>Jira API Token</label>
+              <input type="password" id="jira-token-input" placeholder="Your Atlassian API token">
+            </div>
+          </div>
+          <button onclick="saveJiraCredentials()" class="btn-ghost" style="font-size:12px;margin-top:6px">Save Credentials</button>
+          <span id="creds-saved-msg" style="display:none;color:#86efac;font-size:12px;margin-left:10px">Saved!</span>
+        </div>
+      </details>
       <div id="jql-filter-wrap" style="margin-top:12px;display:none">
         <div class="form-row" id="jql-filter-form"></div>
       </div>
@@ -756,34 +789,20 @@ body:not(.edit-mode) .edit-only{{display:none!important}}
 <!-- GLOBAL JQL MODAL -->
 <div class="modal-overlay" id="gjql-overlay">
   <div class="modal" style="width:620px">
-    <div class="modal-head">
-      <h2>⚙️ Global JQL Filter</h2>
-      <button class="modal-close" onclick="closeModals()">×</button>
+    <button class="modal-close" onclick="closeModals()">×</button>
+    <h2>⚙️ Global JQL Filter</h2>
+    <p style="font-size:13px;color:#94a3b8;margin-bottom:16px">
+      Edit the base query that powers <strong>all charts</strong>. Click <em>Apply &amp; Fetch</em> to pull fresh data from Jira and update every chart instantly.
+    </p>
+    <div class="form-group">
+      <label>Bug JQL Filter</label>
+      <textarea class="jql-box" id="gjql-text" rows="4" style="width:100%;min-height:90px"></textarea>
+      <span class="jql-note">Standard Jira JQL — becomes the base query for all charts. The project filter and date window are added automatically.</span>
     </div>
-    <div class="modal-body">
-      <p style="font-size:12px;color:#94a3b8;margin-bottom:14px;line-height:1.6">
-        This JQL controls <strong>which bugs are fetched from Jira for all charts</strong>.
-        Saving triggers the GitHub Actions workflow to regenerate the dashboard with fresh data.
-        <br><em>Reload this page after ~2 minutes to see updated data.</em>
-      </p>
-      <div class="form-group" style="margin-bottom:12px">
-        <label>Bug JQL Filter</label>
-        <textarea class="jql-box" id="gjql-text" rows="4" style="width:100%;min-height:90px"></textarea>
-        <span class="jql-note">Standard Jira JQL — this becomes the base query that all charts build on top of.</span>
-      </div>
-      <div class="form-group" style="margin-bottom:12px">
-        <label>GitHub Personal Access Token &nbsp;<span style="color:#64748b;font-size:11px;font-weight:400">needs <code style="background:#0f172a;padding:1px 4px;border-radius:3px">workflow</code> scope — stored only in this browser</span></label>
-        <input type="password" id="gjql-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
-      </div>
-      <div class="form-group" style="margin-bottom:4px">
-        <label>GitHub Repo &nbsp;<span style="color:#64748b;font-size:11px;font-weight:400">e.g. omerniddam/bug-dashboard</span></label>
-        <input type="text" id="gjql-repo" placeholder="owner/repo-name">
-      </div>
-      <div id="gjql-status" class="gjql-status"></div>
-    </div>
-    <div class="modal-foot">
+    <div id="gjql-status" class="gjql-status"></div>
+    <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
       <button class="btn-ghost" onclick="closeModals()">Cancel</button>
-      <button class="btn-primary" id="gjql-apply-btn" onclick="applyGlobalJql()">🔄 Trigger Refresh</button>
+      <button class="btn-primary" id="gjql-apply-btn" onclick="applyGlobalJql()">Apply &amp; Fetch All Charts</button>
     </div>
   </div>
 </div>
@@ -892,29 +911,42 @@ function isLocalServer() {{
   return ['localhost','127.0.0.1'].includes(window.location.hostname);
 }}
 
-async function fetchFromJira(jql) {{
-  if (!isLocalServer()) {{
-    throw new Error(
-      'CORS error: direct browser→Jira calls are blocked when opening the file directly.\\n\\n' +
-      'Fix: run the dashboard through the built-in proxy server:\\n\\n' +
-      '  python3 fetch_bugs.py --serve\\n\\n' +
-      'Then open  http://localhost:8080  in your browser.'
-    );
-  }}
+// ── Jira credential helpers ──────────────────────────────────────────────────
+function _getJiraEmail() {{
+  try {{ return localStorage.getItem('jira_email') || ''; }} catch(e) {{ return ''; }}
+}}
+function _getJiraToken() {{
+  try {{ return localStorage.getItem('jira_token') || ''; }} catch(e) {{ return ''; }}
+}}
 
-  // Use the local proxy: GET /jira?jql=...&startAt=...
+async function fetchFromJira(jql) {{
+  const email = _getJiraEmail();
+  const token = _getJiraToken();
+  if (!email || !token) {{
+    throw new Error('Jira credentials not configured. Open a chart JQL panel and enter your Jira email and API token in the "Jira Credentials" section.');
+  }}
+  const auth    = btoa(email + ':' + token);
+  const baseUrl = DASH_CFG.jira_url;
+  const fields  = 'summary,status,assignee,priority,created,resolutiondate,labels,issuetype,customfield_10001,customfield_10032,customfield_10112';
   let all = [], startAt = 0;
   for (let page = 0; page < 200; page++) {{
-    const url = `/jira?jql=${{encodeURIComponent(jql)}}&startAt=${{startAt}}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Proxy error ${{res.status}}: ${{await res.text()}}`);
-    const data = await res.json();
-    if (data.error) throw new Error(`Jira error: ${{data.error}}`);
-    const batch = data.issues || data.values || [];
+    const url = baseUrl + '/rest/api/3/search?jql=' + encodeURIComponent(jql) +
+                '&startAt=' + startAt + '&maxResults=100&fields=' + fields;
+    const res = await fetch(url, {{
+      headers: {{ 'Authorization': 'Basic ' + auth, 'Accept': 'application/json' }}
+    }});
+    if (res.status === 401) throw new Error('Authentication failed. Check your Jira email and API token.');
+    if (res.status === 403) throw new Error('Permission denied. Your Jira account may not have access to this project.');
+    if (!res.ok) {{
+      let body = '';
+      try {{ body = await res.text(); }} catch(e) {{}}
+      throw new Error('Jira API error ' + res.status + (body ? ': ' + body.slice(0, 200) : ''));
+    }}
+    const data  = await res.json();
+    const batch = data.issues || [];
     all.push(...batch.map(processRawIssue));
     startAt += batch.length;
-    // Stop when no more results, or when Jira total is reached and page wasn't full
-    if (!batch.length || (startAt >= (data.total||0) && batch.length < 100)) break;
+    if (!batch.length || startAt >= (data.total || 0)) break;
   }}
   return all;
 }}
@@ -1692,7 +1724,8 @@ function buildJql(chartId){{
   const bq = DASH_CFG.bug_jql;
   const ms = `"${{selYear}}-${{String(selMonth).padStart(2,'0')}}-01"`;
   const me = `"${{isoDate(new Date(selYear,selMonth,0))}}"`;
-  const base = `${{bq}}\nAND project in (${{p}})`;
+  const days = (DASH_CFG.months_of_history || 6) * 31;
+  const base = `${{bq}}\nAND project in (${{p}})\nAND created >= -${{days}}d`;
   const jqls = {{
     c1: `${{base}}\nAND status changed to (${{rs}})\nDURING (${{ms}}, ${{me}})\nORDER BY cf[10032] ASC`,
     c2: `${{base}}\nAND status changed to (${{rs}})\nDURING (${{ms}}, ${{me}})\nORDER BY assignee ASC`,
@@ -1744,6 +1777,17 @@ function openJql(chartId){{
     resetBtn.style.display = 'none';
   }}
 
+  // Pre-fill saved Jira credentials
+  try {{
+    const emailInp = document.getElementById('jira-email-input');
+    const tokenInp = document.getElementById('jira-token-input');
+    if (emailInp) emailInp.value = localStorage.getItem('jira_email') || '';
+    if (tokenInp) tokenInp.value = localStorage.getItem('jira_token') || '';
+    // Auto-expand credentials section if not yet configured
+    const details = document.getElementById('jira-creds-details');
+    if (details && (!_getJiraEmail() || !_getJiraToken())) details.open = true;
+  }} catch(e) {{}}
+
   // Clear any previous error
   const errBox = document.getElementById('jql-error-box');
   if (errBox) errBox.remove();
@@ -1769,15 +1813,19 @@ async function applyJqlFilter(){{
     try {{ localStorage.setItem('jql_' + chartId, newJql); }} catch(e){{}}
   }}
 
+  // Save credentials if entered
+  saveJiraCredentials();
+
   // Re-fetch from Jira
   const btn = document.getElementById('jql-apply-btn');
   const origText = btn.textContent;
-  btn.textContent = '⏳ Fetching…';
+  btn.textContent = 'Fetching...';
   btn.disabled = true;
 
   try {{
     const bugs = await fetchFromJira(newJql);
     CHART_BUGS[chartId] = bugs;
+    try {{ localStorage.setItem('jql_' + chartId, newJql); }} catch(e){{}}
     try {{ localStorage.setItem('bugs_' + chartId, JSON.stringify(bugs)); }} catch(e){{}}
     updateChartBadge(chartId, true, bugs.length);
     closeModals();
@@ -1786,7 +1834,6 @@ async function applyJqlFilter(){{
     btn.textContent = origText;
     btn.disabled = false;
     console.error('Jira fetch error:', err);
-    // Show error inline below the textarea
     let errBox = document.getElementById('jql-error-box');
     if (!errBox) {{
       errBox = document.createElement('pre');
@@ -1794,7 +1841,7 @@ async function applyJqlFilter(){{
       errBox.style.cssText = 'margin-top:10px;padding:10px 12px;background:#2d1a1a;border:1px solid #ef4444;border-radius:6px;color:#fca5a5;font-size:11px;white-space:pre-wrap;word-break:break-word';
       document.getElementById('jql-note').after(errBox);
     }}
-    errBox.textContent = '❌ ' + err.message;
+    errBox.textContent = 'Error: ' + err.message;
   }}
 }}
 
@@ -1806,6 +1853,15 @@ function resetChartData(chartId){{
   updateChartBadge(chartId, false);
   closeModals();
   renderAll();
+}}
+
+function saveJiraCredentials() {{
+  const email = (document.getElementById('jira-email-input').value || '').trim();
+  const token = (document.getElementById('jira-token-input').value || '').trim();
+  if (email) {{ try {{ localStorage.setItem('jira_email', email); }} catch(e) {{}} }}
+  if (token) {{ try {{ localStorage.setItem('jira_token', token); }} catch(e) {{}} }}
+  const msg = document.getElementById('creds-saved-msg');
+  if (msg) {{ msg.style.display = 'inline'; setTimeout(() => {{ msg.style.display = 'none'; }}, 2000); }}
 }}
 
 function copyJql(){{
@@ -1820,6 +1876,7 @@ function closeModals(){{
   document.getElementById('edit-overlay').classList.remove('open');
   document.getElementById('jql-overlay').classList.remove('open');
   document.getElementById('gjql-overlay').classList.remove('open');
+  document.getElementById('pw-overlay').classList.remove('open');
 }}
 
 // ─── CHART BADGES ─────────────────────────────────────────────────────────────
@@ -1877,6 +1934,19 @@ function saveConfigJson(){{
 
 // Restore JQL overrides + cached bug data from localStorage
 (function initFromStorage(){{
+  // Restore global bugs (from a previous Global JQL fetch)
+  try {{
+    const globalBugsRaw = localStorage.getItem('global_bugs');
+    if (globalBugsRaw) {{
+      const parsed = JSON.parse(globalBugsRaw);
+      if (parsed && parsed.length > 0) {{
+        ALL_BUGS.length = 0;
+        ALL_BUGS.push(...parsed);
+      }}
+    }}
+  }} catch(e) {{}}
+
+  // Restore per-chart JQL overrides + cached data
   ['c1','c2','c3','c4','c5','c6','c7','c9'].forEach(id=>{{
     try {{
       const jql = localStorage.getItem('jql_' + id);
@@ -1884,7 +1954,6 @@ function saveConfigJson(){{
       const bugsRaw = localStorage.getItem('bugs_' + id);
       if (bugsRaw) {{
         const parsed = JSON.parse(bugsRaw);
-        // Only restore if non-empty — empty arrays are from failed/stuck fetches
         if (parsed && parsed.length > 0) {{
           CHART_BUGS[id] = parsed;
         }} else {{
@@ -1905,6 +1974,7 @@ if (DASH_CFG.chart_jql_overrides) {{
 document.getElementById('edit-overlay').addEventListener('click', e=>{{ if(e.target===e.currentTarget) closeModals(); }});
 document.getElementById('jql-overlay').addEventListener('click', e=>{{ if(e.target===e.currentTarget) closeModals(); }});
 document.getElementById('gjql-overlay').addEventListener('click', e=>{{ if(e.target===e.currentTarget) closeModals(); }});
+document.getElementById('pw-overlay').addEventListener('click', e=>{{ if(e.target===e.currentTarget) closeModals(); }});
 document.getElementById('wd-input').addEventListener('change', renderAll);
 document.getElementById('gen-time').textContent = DASH_CFG.generated_at;
 
@@ -2098,121 +2168,106 @@ function resetLayout() {{
 }}
 
 // ── Global JQL modal ─────────────────────────────────────────────────────────
-// Opens the global JQL editor. Pre-fills fields from localStorage or DASH_CFG defaults.
 function openGlobalJql() {{
-  // Restore saved values, fall back to what was baked into the HTML at generation time
-  const savedJql   = (() => {{ try {{ return localStorage.getItem('global_jql'); }} catch(e) {{ return null; }} }})();
-  const savedToken = (() => {{ try {{ return localStorage.getItem('gh_pat');     }} catch(e) {{ return null; }} }})();
-  const savedRepo  = (() => {{ try {{ return localStorage.getItem('gh_repo');    }} catch(e) {{ return null; }} }})();
-
-  document.getElementById('gjql-text').value  = savedJql  || DASH_CFG.bug_jql  || '';
-  document.getElementById('gjql-token').value = savedToken || '';
-  document.getElementById('gjql-repo').value  = savedRepo  || DASH_CFG.github_repo || '';
-
-  // Reset status box
+  const savedJql = (() => {{ try {{ return localStorage.getItem('global_jql'); }} catch(e) {{ return null; }} }})();
+  document.getElementById('gjql-text').value = savedJql || DASH_CFG.bug_jql || '';
   const st = document.getElementById('gjql-status');
   st.className = 'gjql-status'; st.textContent = ''; st.style.display = 'none';
-
   const btn = document.getElementById('gjql-apply-btn');
-  btn.disabled = false; btn.textContent = 'Trigger Refresh';
-
+  btn.disabled = false; btn.textContent = 'Apply & Fetch All Charts';
   document.getElementById('gjql-overlay').classList.add('open');
 }}
 
-// Shows a status message inside the Global JQL modal.
 function _gjqlStatus(type, msg) {{
   const el = document.getElementById('gjql-status');
   el.className = 'gjql-status ' + type;
   el.textContent = msg;
-  el.style.display = 'block';
+  el.style.display = msg ? 'block' : 'none';
 }}
 
-// Validates inputs, persists them, then calls the GitHub Actions API to trigger a workflow_dispatch.
 async function applyGlobalJql() {{
-  const jql      = (document.getElementById('gjql-text').value  || '').trim();
-  const token    = (document.getElementById('gjql-token').value || '').trim();
-  const repo     = (document.getElementById('gjql-repo').value  || '').trim();
-  const workflow = DASH_CFG.github_workflow || 'refresh-dashboard.yml';
-
-  // Validation
-  if (!jql)   {{ _gjqlStatus('error', 'JQL cannot be empty.'); return; }}
-  if (!token) {{ _gjqlStatus('error', 'GitHub token is required. Create one at github.com/settings/tokens/new with the workflow scope.'); return; }}
-  if (!repo || !repo.includes('/')) {{ _gjqlStatus('error', 'Enter a valid GitHub repo in the format: owner/repo-name'); return; }}
-
-  // Persist to localStorage
-  try {{
-    localStorage.setItem('global_jql', jql);
-    localStorage.setItem('gh_pat',     token);
-    localStorage.setItem('gh_repo',    repo);
-  }} catch(e) {{}}
-
-  // Trigger GitHub Actions workflow_dispatch
+  const jql = (document.getElementById('gjql-text').value || '').trim();
+  if (!jql) {{ _gjqlStatus('error', 'JQL cannot be empty.'); return; }}
+  if (!_getJiraEmail() || !_getJiraToken()) {{
+    _gjqlStatus('error', 'Jira credentials are required. Scroll down in any chart JQL panel to the "Jira Credentials" section and save your email and API token first.');
+    return;
+  }}
   const btn = document.getElementById('gjql-apply-btn');
-  btn.disabled = true; btn.textContent = 'Triggering...';
+  btn.disabled = true; btn.textContent = 'Fetching...';
   _gjqlStatus('', ''); document.getElementById('gjql-status').style.display = 'none';
-
   try {{
-    const apiUrl = 'https://api.github.com/repos/' + repo + '/actions/workflows/' + workflow + '/dispatches';
-    const res = await fetch(apiUrl, {{
-      method: 'POST',
-      headers: {{
-        'Authorization': 'token ' + token,
-        'Accept':        'application/vnd.github.v3+json',
-        'Content-Type':  'application/json',
-      }},
-      body: JSON.stringify({{ ref: 'main', inputs: {{ bug_jql: jql }} }}),
-    }});
-
-    if (res.status === 204) {{
-      _gjqlStatus('success', 'Refresh triggered! The workflow is now running and will fetch fresh Jira data. Reload this page in about 2 minutes to see the updated data.');
-      btn.textContent = 'Triggered';
-    }} else {{
-      let detail = '';
-      try {{
-        const body = await res.json();
-        detail = body.message ? ' - ' + body.message : '';
-        if (res.status === 401) detail = ' - Token is invalid or expired. Generate a new one at github.com/settings/tokens/new';
-        if (res.status === 403) detail = ' - Permission denied. Make sure your token has the workflow scope.';
-        if (res.status === 404) detail = ' - Workflow or repo not found. Check repo name and that the workflow file exists.';
-        if (res.status === 422) detail = ' - Could not process. Check the branch name is main and workflow_dispatch is enabled.';
-      }} catch(pe) {{}}
-      _gjqlStatus('error', 'GitHub API error: HTTP ' + res.status + detail);
-      btn.disabled = false; btn.textContent = 'Trigger Refresh';
-    }}
-  }} catch(netErr) {{
-    _gjqlStatus('error', 'Network error: ' + netErr.message);
-    btn.disabled = false; btn.textContent = 'Trigger Refresh';
+    const days   = (DASH_CFG.months_of_history || 6) * 31;
+    const fullJql = 'project in (' + DASH_CFG.projects + ') AND ' + jql + ' AND created >= -' + days + 'd ORDER BY created ASC';
+    _gjqlStatus('info', 'Fetching bugs from Jira...');
+    const bugs = await fetchFromJira(fullJql);
+    ALL_BUGS.length = 0;
+    ALL_BUGS.push(...bugs);
+    try {{ localStorage.setItem('global_jql', jql); }} catch(e) {{}}
+    try {{ localStorage.setItem('global_bugs', JSON.stringify(bugs)); }} catch(e) {{}}
+    _gjqlStatus('success', 'Loaded ' + bugs.length + ' bugs. All charts updated.');
+    btn.textContent = 'Done';
+    renderAll();
+    setTimeout(() => closeModals(), 1800);
+  }} catch(err) {{
+    _gjqlStatus('error', 'Fetch error: ' + err.message);
+    btn.disabled = false; btn.textContent = 'Apply & Fetch All Charts';
   }}
 }}
 
-// ── Edit mode toggle ──────────────────────────────────────────────────────────
-// Default: OFF — viewers see a clean, locked dashboard.
-// Click "Edit Layout" to unlock drag, resize, rename, JQL controls.
+// ── Edit mode toggle (password-protected) ─────────────────────────────────────
 function toggleEditMode() {{
-  const isEdit = document.body.classList.toggle('edit-mode');
+  if (document.body.classList.contains('edit-mode')) {{
+    _exitEditMode();
+  }} else {{
+    // Show password prompt
+    const inp = document.getElementById('pw-input');
+    const err = document.getElementById('pw-error');
+    if (inp) inp.value = '';
+    if (err) err.style.display = 'none';
+    document.getElementById('pw-overlay').classList.add('open');
+    setTimeout(() => {{ if (inp) inp.focus(); }}, 120);
+  }}
+}}
+
+function checkEditPassword() {{
+  const val = (document.getElementById('pw-input').value || '');
+  if (val === 'OX12345') {{
+    document.getElementById('pw-overlay').classList.remove('open');
+    _enterEditMode();
+  }} else {{
+    const err = document.getElementById('pw-error');
+    if (err) err.style.display = 'block';
+    const inp = document.getElementById('pw-input');
+    if (inp) {{ inp.value = ''; inp.focus(); }}
+  }}
+}}
+
+function _enterEditMode() {{
+  document.body.classList.add('edit-mode');
   const btn = document.getElementById('edit-mode-btn');
   if (btn) {{
-    btn.textContent = isEdit ? '✓ Done Editing' : '✏️ Edit Layout';
-    btn.className   = 'btn-edit-mode ' + (isEdit ? 'edit-mode-on' : 'view-mode');
-    btn.title       = isEdit ? 'Click to exit edit mode and lock the layout' : 'Unlock layout editing — drag, resize, rename charts';
+    btn.textContent = 'Done Editing';
+    btn.className   = 'btn-edit-mode edit-mode-on';
+    btn.title       = 'Click to save and exit edit mode';
   }}
-  try {{ localStorage.setItem('edit_mode', isEdit ? '1' : '0'); }} catch(e) {{}}
+  // Pre-fill saved credentials into the Jira credentials section
+  try {{
+    const emailInp = document.getElementById('jira-email-input');
+    const tokenInp = document.getElementById('jira-token-input');
+    if (emailInp) emailInp.value = localStorage.getItem('jira_email') || '';
+    if (tokenInp) tokenInp.value = localStorage.getItem('jira_token') || '';
+  }} catch(e) {{}}
 }}
 
-// Restore edit mode preference (persisted per-browser; default OFF)
-(function initEditMode() {{
-  let saved;
-  try {{ saved = localStorage.getItem('edit_mode'); }} catch(e) {{}}
-  if (saved === '1') {{
-    document.body.classList.add('edit-mode');
-    const btn = document.getElementById('edit-mode-btn');
-    if (btn) {{
-      btn.textContent = '✓ Done Editing';
-      btn.className   = 'btn-edit-mode edit-mode-on';
-      btn.title       = 'Click to exit edit mode and lock the layout';
-    }}
+function _exitEditMode() {{
+  document.body.classList.remove('edit-mode');
+  const btn = document.getElementById('edit-mode-btn');
+  if (btn) {{
+    btn.textContent = 'Edit Layout';
+    btn.className   = 'btn-edit-mode view-mode';
+    btn.title       = 'Unlock layout editing, drag, resize, rename, and edit queries';
   }}
-}})();
+}}
 
 buildMonthBar();
 loadLayout();
