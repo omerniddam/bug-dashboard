@@ -749,9 +749,9 @@ body:not(.edit-mode) .edit-only{{display:none!important}}
     </div>
     <div class="modal-body">
       <p style="font-size:12px;color:#94a3b8;margin-bottom:10px">
-        The JQL below represents what data is shown. You can edit it freely —
-        copy &amp; paste into Jira to run it directly, or adjust the filter and click
-        <strong>Apply Filter</strong> to update the chart from pre-fetched data.
+        The JQL below shows exactly what this chart queries. Copy it into Jira to verify results.
+        <strong>Apply Filter</strong> filters the pre-loaded data instantly (team/date).
+        <strong>Refresh from Jira</strong> triggers a full re-fetch via GitHub Actions (~2 min) and reloads the page.
       </p>
       <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
         <button class="copy-btn" onclick="copyJql()">📋 Copy</button>
@@ -764,8 +764,9 @@ body:not(.edit-mode) .edit-only{{display:none!important}}
     </div>
     <div class="modal-foot">
       <button class="btn-ghost" onclick="closeModals()">Close</button>
-      <button class="btn-ghost" id="jql-reset-btn" onclick="resetChartData(activeJql)" style="display:none;color:#f87171;border-color:#f87171">↩ Reset to Default</button>
-      <button class="btn-primary" id="jql-apply-btn" onclick="applyJqlFilter()" style="display:none">Apply &amp; Re-fetch</button>
+      <button class="btn-ghost" id="jql-reset-btn" onclick="resetChartData(activeJql)" style="display:none;color:#f87171;border-color:#f87171">&#8629; Reset</button>
+      <button class="btn-ghost" id="jql-apply-btn" onclick="applyJqlFilter()" style="display:none">Apply Filter</button>
+      <button class="btn-primary" id="jql-refresh-btn" onclick="triggerChartRefresh()" style="display:none">&#8635; Refresh from Jira</button>
     </div>
   </div>
 </div>
@@ -774,19 +775,29 @@ body:not(.edit-mode) .edit-only{{display:none!important}}
 <div class="modal-overlay" id="gjql-overlay">
   <div class="modal" style="width:620px">
     <button class="modal-close" onclick="closeModals()">×</button>
-    <h2>⚙️ Global JQL Filter</h2>
+    <h2>&#9881;&#65039; Global JQL Filter</h2>
     <p style="font-size:13px;color:#94a3b8;margin-bottom:16px">
-      Edit the base query that powers <strong>all charts</strong>. Click <em>Apply &amp; Fetch</em> to pull fresh data from Jira and update every chart instantly.
+      Edit the base query that powers <strong>all charts</strong>. Clicking <em>Trigger Refresh</em> runs a GitHub Actions workflow that re-fetches all data from Jira (~2 min), then this page reloads automatically.
     </p>
     <div class="form-group">
       <label>Bug JQL Filter</label>
       <textarea class="jql-box" id="gjql-text" rows="4" style="width:100%;min-height:90px"></textarea>
-      <span class="jql-note">Standard Jira JQL — becomes the base query for all charts. The project filter and date window are added automatically.</span>
+      <span class="jql-note">Standard Jira JQL — becomes the base query for all charts. The project and date filters are added automatically by the workflow.</span>
     </div>
-    <div id="gjql-status" class="gjql-status"></div>
+    <details id="gjql-pat-details" style="margin-top:14px;border-top:1px solid #1e293b;padding-top:12px">
+      <summary style="cursor:pointer;color:#64748b;font-size:12px;user-select:none">GitHub Access Token (one-time setup)</summary>
+      <div style="margin-top:10px">
+        <div class="form-group">
+          <label>Personal Access Token</label>
+          <input type="password" id="gjql-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+          <span class="jql-note">Needs <code>repo</code> + <code>workflow</code> scopes. Stored only in your browser. Generate at github.com/settings/tokens/new</span>
+        </div>
+      </div>
+    </details>
+    <div id="gjql-status" class="gjql-status" style="margin-top:12px"></div>
     <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end">
       <button class="btn-ghost" onclick="closeModals()">Cancel</button>
-      <button class="btn-primary" id="gjql-apply-btn" onclick="applyGlobalJql()">Apply &amp; Fetch All Charts</button>
+      <button class="btn-primary" id="gjql-apply-btn" onclick="applyGlobalJql()">Trigger Refresh</button>
     </div>
   </div>
 </div>
@@ -1737,25 +1748,11 @@ function openJql(chartId){{
     filterWrap.style.display = 'none';
   }}
 
-  // Always show Apply button; also show Reset if chart has custom data
+  // Show Apply + Refresh buttons; show Reset only if chart has custom data
   document.getElementById('jql-apply-btn').style.display = '';
+  document.getElementById('jql-refresh-btn').style.display = '';
   const resetBtn = document.getElementById('jql-reset-btn');
-  if (CHART_BUGS[chartId]) {{
-    resetBtn.style.display = '';
-  }} else {{
-    resetBtn.style.display = 'none';
-  }}
-
-  // Pre-fill saved Jira credentials
-  try {{
-    const emailInp = document.getElementById('jira-email-input');
-    const tokenInp = document.getElementById('jira-token-input');
-    if (emailInp) emailInp.value = localStorage.getItem('jira_email') || '';
-    if (tokenInp) tokenInp.value = localStorage.getItem('jira_token') || '';
-    // Auto-expand credentials section if not yet configured
-    const details = document.getElementById('jira-creds-details');
-    if (details && (!_getJiraEmail() || !_getJiraToken())) details.open = true;
-  }} catch(e) {{}}
+  resetBtn.style.display = CHART_BUGS[chartId] ? '' : 'none';
 
   // Clear any previous error
   const errBox = document.getElementById('jql-error-box');
@@ -1764,54 +1761,44 @@ function openJql(chartId){{
   document.getElementById('jql-overlay').classList.add('open');
 }}
 
-async function applyJqlFilter(){{
+function applyJqlFilter(){{
   const chartId = activeJql;
-  const jqlText = document.getElementById('jql-text');
-  const newJql  = jqlText ? jqlText.value.trim() : '';
+  const newJql  = (document.getElementById('jql-text').value || '').trim();
 
-  // Save team filter selection (no re-fetch needed)
+  // Save team filter selection (instant, no re-fetch)
   const sel = document.getElementById('f-teams');
   if (sel) {{
-    const chosen = [...sel.selectedOptions].map(o=>o.value);
-    CUSTOM_FILTERS[chartId].teams = chosen;
+    CUSTOM_FILTERS[chartId].teams = [...sel.selectedOptions].map(o=>o.value);
   }}
 
-  // Save JQL to memory + localStorage
+  // Save JQL to memory + localStorage for display next time
   if (newJql) {{
     SAVED_JQLS[chartId] = newJql;
     try {{ localStorage.setItem('jql_' + chartId, newJql); }} catch(e){{}}
   }}
 
-  // Save credentials if entered
-  saveJiraCredentials();
+  closeModals();
+  renderAll();
+}}
 
-  // Re-fetch from Jira
-  const btn = document.getElementById('jql-apply-btn');
-  const origText = btn.textContent;
-  btn.textContent = 'Fetching...';
-  btn.disabled = true;
-
+// Trigger a full GitHub Actions refresh with the current chart's base JQL
+function triggerChartRefresh() {{
+  // Pre-fill global JQL modal with the current chart's base query, then open it
+  const savedJql = (() => {{ try {{ return localStorage.getItem('global_jql'); }} catch(e) {{ return null; }} }})();
+  document.getElementById('gjql-text').value = savedJql || DASH_CFG.bug_jql || '';
+  const st = document.getElementById('gjql-status');
+  st.className = 'gjql-status'; st.textContent = ''; st.style.display = 'none';
+  const btn = document.getElementById('gjql-apply-btn');
+  btn.disabled = false; btn.textContent = 'Trigger Refresh';
+  // Pre-fill saved PAT
   try {{
-    const bugs = await fetchFromJira(newJql);
-    CHART_BUGS[chartId] = bugs;
-    try {{ localStorage.setItem('jql_' + chartId, newJql); }} catch(e){{}}
-    try {{ localStorage.setItem('bugs_' + chartId, JSON.stringify(bugs)); }} catch(e){{}}
-    updateChartBadge(chartId, true, bugs.length);
-    closeModals();
-    renderAll();
-  }} catch(err) {{
-    btn.textContent = origText;
-    btn.disabled = false;
-    console.error('Jira fetch error:', err);
-    let errBox = document.getElementById('jql-error-box');
-    if (!errBox) {{
-      errBox = document.createElement('pre');
-      errBox.id = 'jql-error-box';
-      errBox.style.cssText = 'margin-top:10px;padding:10px 12px;background:#2d1a1a;border:1px solid #ef4444;border-radius:6px;color:#fca5a5;font-size:11px;white-space:pre-wrap;word-break:break-word';
-      document.getElementById('jql-note').after(errBox);
-    }}
-    errBox.textContent = 'Error: ' + err.message;
-  }}
+    const saved = localStorage.getItem('gh_pat');
+    if (saved) document.getElementById('gjql-token').value = saved;
+    if (!saved) document.getElementById('gjql-pat-details').open = true;
+  }} catch(e) {{}}
+  closeModals();
+  document.getElementById('gjql-overlay').classList.add('open');
+}}
 }}
 
 function resetChartData(chartId){{
@@ -2143,7 +2130,13 @@ function openGlobalJql() {{
   const st = document.getElementById('gjql-status');
   st.className = 'gjql-status'; st.textContent = ''; st.style.display = 'none';
   const btn = document.getElementById('gjql-apply-btn');
-  btn.disabled = false; btn.textContent = 'Apply & Fetch All Charts';
+  btn.disabled = false; btn.textContent = 'Trigger Refresh';
+  // Pre-fill saved PAT
+  try {{
+    const saved = localStorage.getItem('gh_pat');
+    if (saved) {{ document.getElementById('gjql-token').value = saved; }}
+    else {{ document.getElementById('gjql-pat-details').open = true; }}
+  }} catch(e) {{}}
   document.getElementById('gjql-overlay').classList.add('open');
 }}
 
@@ -2154,32 +2147,79 @@ function _gjqlStatus(type, msg) {{
   el.style.display = msg ? 'block' : 'none';
 }}
 
+// Poll GitHub Actions for workflow completion, then auto-reload
+async function _pollAndReload(token, repo, workflow, startedAt) {{
+  const apiUrl = 'https://api.github.com/repos/' + repo + '/actions/workflows/' + workflow + '/runs?event=workflow_dispatch&per_page=5';
+  let attempts = 0;
+  const maxAttempts = 24; // 4 minutes max (24 x 10s)
+  const interval = setInterval(async () => {{
+    attempts++;
+    const remaining = Math.max(0, (maxAttempts - attempts) * 10);
+    const m = Math.floor(remaining / 60), s = remaining % 60;
+    _gjqlStatus('info', 'Workflow running... ~' + m + ':' + String(s).padStart(2,'0') + ' remaining. Page will reload automatically.');
+    try {{
+      const res = await fetch(apiUrl, {{
+        headers: {{ 'Authorization': 'token ' + token, 'Accept': 'application/vnd.github.v3+json' }}
+      }});
+      if (res.ok) {{
+        const data = await res.json();
+        const run = (data.workflow_runs || []).find(r => r.created_at >= startedAt);
+        if (run && run.status === 'completed') {{
+          clearInterval(interval);
+          _gjqlStatus('success', 'Done! Reloading dashboard...');
+          setTimeout(() => location.reload(true), 1500);
+          return;
+        }}
+      }}
+    }} catch(e) {{}}
+    if (attempts >= maxAttempts) {{
+      clearInterval(interval);
+      _gjqlStatus('info', 'Workflow is taking longer than expected. Reload the page in a moment to see updated data.');
+    }}
+  }}, 10000);
+}}
+
 async function applyGlobalJql() {{
-  const jql = (document.getElementById('gjql-text').value || '').trim();
-  if (!jql) {{ _gjqlStatus('error', 'JQL cannot be empty.'); return; }}
-  if (!_getJiraEmail() || !_getJiraToken()) {{
-    _gjqlStatus('error', 'Jira credentials are required. Scroll down in any chart JQL panel to the "Jira Credentials" section and save your email and API token first.');
-    return;
-  }}
+  const jql   = (document.getElementById('gjql-text').value  || '').trim();
+  const token = (document.getElementById('gjql-token').value || '').trim();
+  const repo     = DASH_CFG.github_repo     || '';
+  const workflow = DASH_CFG.github_workflow || 'refresh-dashboard.yml';
+  if (!jql)   {{ _gjqlStatus('error', 'JQL cannot be empty.'); return; }}
+  if (!token) {{ _gjqlStatus('error', 'GitHub token is required. Expand "GitHub Access Token" above to enter it.'); return; }}
+  if (!repo)  {{ _gjqlStatus('error', 'GitHub repo not configured in dashboard settings.'); return; }}
+  // Persist JQL + token
+  try {{ localStorage.setItem('global_jql', jql); }} catch(e) {{}}
+  try {{ localStorage.setItem('gh_pat', token);   }} catch(e) {{}}
   const btn = document.getElementById('gjql-apply-btn');
-  btn.disabled = true; btn.textContent = 'Fetching...';
-  _gjqlStatus('', ''); document.getElementById('gjql-status').style.display = 'none';
+  btn.disabled = true; btn.textContent = 'Triggering...';
+  _gjqlStatus('info', 'Contacting GitHub...');
+  const startedAt = new Date().toISOString();
   try {{
-    const days   = (DASH_CFG.months_of_history || 6) * 31;
-    const fullJql = 'project in (' + DASH_CFG.projects + ') AND ' + jql + ' AND created >= -' + days + 'd ORDER BY created ASC';
-    _gjqlStatus('info', 'Fetching bugs from Jira...');
-    const bugs = await fetchFromJira(fullJql);
-    ALL_BUGS.length = 0;
-    ALL_BUGS.push(...bugs);
-    try {{ localStorage.setItem('global_jql', jql); }} catch(e) {{}}
-    try {{ localStorage.setItem('global_bugs', JSON.stringify(bugs)); }} catch(e) {{}}
-    _gjqlStatus('success', 'Loaded ' + bugs.length + ' bugs. All charts updated.');
-    btn.textContent = 'Done';
-    renderAll();
-    setTimeout(() => closeModals(), 1800);
-  }} catch(err) {{
-    _gjqlStatus('error', 'Fetch error: ' + err.message);
-    btn.disabled = false; btn.textContent = 'Apply & Fetch All Charts';
+    const apiUrl = 'https://api.github.com/repos/' + repo + '/actions/workflows/' + workflow + '/dispatches';
+    const res = await fetch(apiUrl, {{
+      method: 'POST',
+      headers: {{ 'Authorization': 'token ' + token, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ ref: 'main', inputs: {{ bug_jql: jql }} }})
+    }});
+    if (res.status === 204) {{
+      btn.textContent = 'Running...';
+      _gjqlStatus('info', 'Workflow triggered! Fetching data from Jira (~2 min). Page reloads automatically.');
+      _pollAndReload(token, repo, workflow, startedAt);
+    }} else {{
+      let detail = '';
+      try {{
+        const body = await res.json();
+        if (res.status === 401) detail = ' - Token invalid or expired.';
+        else if (res.status === 403) detail = ' - Token lacks workflow scope.';
+        else if (res.status === 404) detail = ' - Repo or workflow not found.';
+        else detail = body.message ? ' - ' + body.message : '';
+      }} catch(e) {{}}
+      _gjqlStatus('error', 'GitHub error: HTTP ' + res.status + detail);
+      btn.disabled = false; btn.textContent = 'Trigger Refresh';
+    }}
+  }} catch(netErr) {{
+    _gjqlStatus('error', 'Network error: ' + netErr.message);
+    btn.disabled = false; btn.textContent = 'Trigger Refresh';
   }}
 }}
 
