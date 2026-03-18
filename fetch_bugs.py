@@ -406,7 +406,7 @@ def build_html(bugs, timeline, norm_timeline, config, generated_at):
         "email":            config.get("email", ""),
         # api_token intentionally omitted — never embed secrets in HTML
         "projects":         config.get("projects", ""),
-        "bug_jql":          config.get("bug_jql", "(issuetype = Bug OR labels in (bug, jira_escalated))"),
+        "bug_jql":          config.get("bug_jql", "(issuetype = Bug OR labels in (bug, jira_escalated)) and issuetype!=sub-task and creator=557058:3e2ef232-d5c4-4c0e-94b0-977a305ebaae"),
         "resolved_statuses": config.get("resolved_statuses", ["Done", "To be reviewed by the customer"]),
         "working_days":     config.get("working_days_per_month", 20),
         "generated_at":     generated_at,
@@ -2236,7 +2236,7 @@ def main():
     days  = cfg.get("months_of_history", 6) * 31
     jql   = (
         f"project in ({cfg.get('projects','OXDEV')}) "
-        f"AND {cfg.get('bug_jql','(issuetype = Bug OR labels in (bug, jira_escalated))')} "
+        f"AND {cfg.get('bug_jql','(issuetype = Bug OR labels in (bug, jira_escalated)) and issuetype!=sub-task and creator=557058:3e2ef232-d5c4-4c0e-94b0-977a305ebaae')} "
         f"AND created >= -{days}d "
         f"AND creator = 557058:3e2ef232-d5c4-4c0e-94b0-977a305ebaae "
         f"ORDER BY created ASC"
@@ -2422,7 +2422,7 @@ def check_fields():
     base = cfg["jira_url"].rstrip("/")
     jql  = (
         f"project in ({cfg.get('projects','OXDEV')}) "
-        f"AND {cfg.get('bug_jql','(issuetype = Bug OR labels in (bug, jira_escalated))')} "
+        f"AND {cfg.get('bug_jql','(issuetype = Bug OR labels in (bug, jira_escalated)) and issuetype!=sub-task and creator=557058:3e2ef232-d5c4-4c0e-94b0-977a305ebaae')} "
         f"ORDER BY created DESC"
     )
     params = {
