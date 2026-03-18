@@ -414,6 +414,7 @@ def build_html(bugs, timeline, norm_timeline, config, generated_at):
         "github_repo":      config.get("github_repo", ""),
         "github_workflow":  config.get("github_workflow", "refresh-dashboard.yml"),
         "months_of_history": config.get("months_of_history", 6),
+        "jira_proxy_url":   config.get("jira_proxy_url", ""),
     }
     cfg_json = json.dumps(dash_cfg, ensure_ascii=False)
 
@@ -757,23 +758,6 @@ body:not(.edit-mode) .edit-only{{display:none!important}}
       </div>
       <textarea class="jql-box" id="jql-text" style="width:100%;min-height:100px"></textarea>
       <p class="jql-note" id="jql-note"></p>
-      <details id="jira-creds-details" style="margin-top:16px;border-top:1px solid #1e293b;padding-top:12px">
-        <summary style="cursor:pointer;color:#64748b;font-size:12px;user-select:none">Jira Credentials (one-time setup — stored in your browser)</summary>
-        <div style="margin-top:10px">
-          <div class="form-row">
-            <div class="form-group">
-              <label>Jira Email</label>
-              <input type="email" id="jira-email-input" placeholder="you@company.com">
-            </div>
-            <div class="form-group">
-              <label>Jira API Token</label>
-              <input type="password" id="jira-token-input" placeholder="Your Atlassian API token">
-            </div>
-          </div>
-          <button onclick="saveJiraCredentials()" class="btn-ghost" style="font-size:12px;margin-top:6px">Save Credentials</button>
-          <span id="creds-saved-msg" style="display:none;color:#86efac;font-size:12px;margin-left:10px">Saved!</span>
-        </div>
-      </details>
       <div id="jql-filter-wrap" style="margin-top:12px;display:none">
         <div class="form-row" id="jql-filter-form"></div>
       </div>
@@ -911,36 +895,21 @@ function isLocalServer() {{
   return ['localhost','127.0.0.1'].includes(window.location.hostname);
 }}
 
-// ── Jira credential helpers ──────────────────────────────────────────────────
-function _getJiraEmail() {{
-  try {{ return localStorage.getItem('jira_email') || ''; }} catch(e) {{ return ''; }}
-}}
-function _getJiraToken() {{
-  try {{ return localStorage.getItem('jira_token') || ''; }} catch(e) {{ return ''; }}
-}}
-
 async function fetchFromJira(jql) {{
-  const email = _getJiraEmail();
-  const token = _getJiraToken();
-  if (!email || !token) {{
-    throw new Error('Jira credentials not configured. Open a chart JQL panel and enter your Jira email and API token in the "Jira Credentials" section.');
+  const proxyUrl = DASH_CFG.jira_proxy_url;
+  if (!proxyUrl) {{
+    throw new Error('Jira proxy not configured. Ask the dashboard admin to deploy the Cloudflare Worker and add JIRA_PROXY_URL to GitHub Secrets.');
   }}
-  const auth    = btoa(email + ':' + token);
-  const baseUrl = DASH_CFG.jira_url;
-  const fields  = 'summary,status,assignee,priority,created,resolutiondate,labels,issuetype,customfield_10001,customfield_10032,customfield_10112';
   let all = [], startAt = 0;
   for (let page = 0; page < 200; page++) {{
-    const url = baseUrl + '/rest/api/3/search?jql=' + encodeURIComponent(jql) +
-                '&startAt=' + startAt + '&maxResults=100&fields=' + fields;
-    const res = await fetch(url, {{
-      headers: {{ 'Authorization': 'Basic ' + auth, 'Accept': 'application/json' }}
-    }});
-    if (res.status === 401) throw new Error('Authentication failed. Check your Jira email and API token.');
-    if (res.status === 403) throw new Error('Permission denied. Your Jira account may not have access to this project.');
+    const url = proxyUrl + '?jql=' + encodeURIComponent(jql) + '&startAt=' + startAt + '&maxResults=100';
+    const res = await fetch(url);
+    if (res.status === 401) throw new Error('Authentication failed — check the proxy secrets (JIRA_EMAIL / JIRA_API_TOKEN).');
+    if (res.status === 403) throw new Error('Permission denied — your Jira account may not have access to this project.');
     if (!res.ok) {{
       let body = '';
       try {{ body = await res.text(); }} catch(e) {{}}
-      throw new Error('Jira API error ' + res.status + (body ? ': ' + body.slice(0, 200) : ''));
+      throw new Error('Proxy error ' + res.status + (body ? ': ' + body.slice(0, 200) : ''));
     }}
     const data  = await res.json();
     const batch = data.issues || [];

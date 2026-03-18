@@ -46,9 +46,10 @@ jobs:
       #
       - name: Create config.json from secrets
         env:
-          JIRA_URL:        ${{ secrets.JIRA_URL }}
-          JIRA_EMAIL:      ${{ secrets.JIRA_EMAIL }}
-          JIRA_API_TOKEN:  ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_URL:         ${{ secrets.JIRA_URL }}
+          JIRA_EMAIL:       ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN:   ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_PROXY_URL:   ${{ secrets.JIRA_PROXY_URL }}
           BUG_JQL_OVERRIDE: ${{ inputs.bug_jql }}
         run: |
           python3 - <<'EOF'
@@ -73,6 +74,7 @@ jobs:
             "months_of_history":      6,
             "github_repo":            "omerniddam/bug-dashboard",
             "github_workflow":        "refresh-dashboard.yml",
+            "jira_proxy_url":         os.environ.get("JIRA_PROXY_URL", ""),
           }
           with open("config.json", "w") as f:
               json.dump(cfg, f, indent=2)
