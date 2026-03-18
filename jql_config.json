@@ -1,0 +1,3 @@
+{
+  "bug_jql": "(issuetype = Bug OR labels in (bug, jira_escalated)) and issuetype!=sub-task and creator=557058:3e2ef232-d5c4-4c0e-94b0-977a305ebaae"
+}
