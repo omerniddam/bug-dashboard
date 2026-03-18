@@ -2114,7 +2114,7 @@ function openGlobalJql() {{
   st.className = 'gjql-status'; st.textContent = ''; st.style.display = 'none';
 
   const btn = document.getElementById('gjql-apply-btn');
-  btn.disabled = false; btn.textContent = '🔄 Trigger Refresh';
+  btn.disabled = false; btn.textContent = 'Trigger Refresh';
 
   document.getElementById('gjql-overlay').classList.add('open');
 }}
@@ -2129,34 +2129,34 @@ function _gjqlStatus(type, msg) {{
 
 // Validates inputs, persists them, then calls the GitHub Actions API to trigger a workflow_dispatch.
 async function applyGlobalJql() {{
-  const jql   = (document.getElementById('gjql-text').value  || '').trim();
-  const token = (document.getElementById('gjql-token').value || '').trim();
-  const repo  = (document.getElementById('gjql-repo').value  || '').trim();
+  const jql      = (document.getElementById('gjql-text').value  || '').trim();
+  const token    = (document.getElementById('gjql-token').value || '').trim();
+  const repo     = (document.getElementById('gjql-repo').value  || '').trim();
   const workflow = DASH_CFG.github_workflow || 'refresh-dashboard.yml';
 
-  // ── Validation ────────────────────────────────────────────────────────────
-  if (!jql)   {{ _gjqlStatus('error', '❌ JQL cannot be empty.'); return; }}
-  if (!token) {{ _gjqlStatus('error', '❌ GitHub token is required.\\n\\nCreate one at github.com/settings/tokens/new with the "workflow" scope.'); return; }}
-  if (!repo || !repo.includes('/')) {{ _gjqlStatus('error', '❌ Enter a valid GitHub repo in the format  owner/repo-name'); return; }}
+  // Validation
+  if (!jql)   {{ _gjqlStatus('error', 'JQL cannot be empty.'); return; }}
+  if (!token) {{ _gjqlStatus('error', 'GitHub token is required. Create one at github.com/settings/tokens/new with the workflow scope.'); return; }}
+  if (!repo || !repo.includes('/')) {{ _gjqlStatus('error', 'Enter a valid GitHub repo in the format: owner/repo-name'); return; }}
 
-  // ── Persist to localStorage ───────────────────────────────────────────────
+  // Persist to localStorage
   try {{
     localStorage.setItem('global_jql', jql);
     localStorage.setItem('gh_pat',     token);
     localStorage.setItem('gh_repo',    repo);
   }} catch(e) {{}}
 
-  // ── Trigger GitHub Actions workflow_dispatch ───────────────────────────────
+  // Trigger GitHub Actions workflow_dispatch
   const btn = document.getElementById('gjql-apply-btn');
-  btn.disabled = true; btn.textContent = '⏳ Triggering…';
+  btn.disabled = true; btn.textContent = 'Triggering...';
   _gjqlStatus('', ''); document.getElementById('gjql-status').style.display = 'none';
 
   try {{
-    const apiUrl = `https://api.github.com/repos/${{repo}}/actions/workflows/${{workflow}}/dispatches`;
+    const apiUrl = 'https://api.github.com/repos/' + repo + '/actions/workflows/' + workflow + '/dispatches';
     const res = await fetch(apiUrl, {{
       method: 'POST',
       headers: {{
-        'Authorization': `token ${{token}}`,
+        'Authorization': 'token ' + token,
         'Accept':        'application/vnd.github.v3+json',
         'Content-Type':  'application/json',
       }},
@@ -2164,31 +2164,24 @@ async function applyGlobalJql() {{
     }});
 
     if (res.status === 204) {{
-      // 204 No Content = workflow successfully queued
-      _gjqlStatus('success',
-        '✅ Refresh triggered successfully!\\n\\n' +
-        'The GitHub Actions workflow is now running. It will fetch fresh Jira data using your updated JQL, ' +
-        'regenerate the dashboard, and commit it to the repo.\\n\\n' +
-        '⏱  Reload this page in ~2 minutes to see the updated data.'
-      );
-      btn.textContent = '✓ Triggered';
+      _gjqlStatus('success', 'Refresh triggered! The workflow is now running and will fetch fresh Jira data. Reload this page in about 2 minutes to see the updated data.');
+      btn.textContent = 'Triggered';
     }} else {{
-      // Parse GitHub's error response for a helpful message
       let detail = '';
       try {{
         const body = await res.json();
-        detail = body.message ? `\n\n${{body.message}}` : '';
-        if (res.status === 401) detail = '\\n\\nYour token appears to be invalid or expired. Generate a new one at github.com/settings/tokens/new';
-        if (res.status === 403) detail = '\\n\\nPermission denied. Make sure your token has the "workflow" scope.';
-        if (res.status === 404) detail = '\\n\\nWorkflow or repo not found. Check that the repo ' + repo + ' exists and the workflow file is named ' + workflow;
-        if (res.status === 422) detail = '\\n\\nUnprocessable — the main branch may not exist, or the workflow file is missing the workflow_dispatch trigger.';
+        detail = body.message ? ' - ' + body.message : '';
+        if (res.status === 401) detail = ' - Token is invalid or expired. Generate a new one at github.com/settings/tokens/new';
+        if (res.status === 403) detail = ' - Permission denied. Make sure your token has the workflow scope.';
+        if (res.status === 404) detail = ' - Workflow or repo not found. Check repo name and that the workflow file exists.';
+        if (res.status === 422) detail = ' - Could not process. Check the branch name is main and workflow_dispatch is enabled.';
       }} catch(pe) {{}}
-      _gjqlStatus('error', `❌ GitHub API returned HTTP ${{res.status}}${{detail}}`);
-      btn.disabled = false; btn.textContent = '🔄 Trigger Refresh';
+      _gjqlStatus('error', 'GitHub API error: HTTP ' + res.status + detail);
+      btn.disabled = false; btn.textContent = 'Trigger Refresh';
     }}
   }} catch(netErr) {{
-    _gjqlStatus('error', `❌ Network error: ${{netErr.message}}\n\nCheck your internet connection and try again.`);
-    btn.disabled = false; btn.textContent = '🔄 Trigger Refresh';
+    _gjqlStatus('error', 'Network error: ' + netErr.message);
+    btn.disabled = false; btn.textContent = 'Trigger Refresh';
   }}
 }}
 
