@@ -54,13 +54,31 @@ jobs:
         run: |
           python3 - <<'EOF'
           import json, os
-          default_jql = "(issuetype = Bug OR labels in (bug, jira_escalated)) and issuetype!=sub-task and creator=557058:3e2ef232-d5c4-4c0e-94b0-977a305ebaae"
+          from pathlib import Path
+
+          # Priority order for bug_jql:
+          #   1. Explicit override passed to this workflow run (from dashboard UI)
+          #   2. Previously saved override in jql_config.json (survives daily scheduled runs)
+          #   3. Hardcoded default
+          DEFAULT_JQL = "(issuetype = Bug OR labels in (bug, jira_escalated)) and issuetype!=sub-task and creator=557058:3e2ef232-d5c4-4c0e-94b0-977a305ebaae"
+          JQL_CONFIG_PATH = Path("jql_config.json")
+
           jql_override = os.environ.get("BUG_JQL_OVERRIDE", "").strip()
-          effective_jql = jql_override if jql_override else default_jql
+
           if jql_override:
-              print(f"  JQL override applied: {jql_override}")
+              effective_jql = jql_override
+              print(f"  JQL override from workflow input: {jql_override}")
+              # Persist this override so future scheduled runs use it too
+              JQL_CONFIG_PATH.write_text(json.dumps({"bug_jql": jql_override}, indent=2))
+              print(f"  Saved to jql_config.json for future runs")
+          elif JQL_CONFIG_PATH.exists():
+              saved = json.loads(JQL_CONFIG_PATH.read_text())
+              effective_jql = saved.get("bug_jql", DEFAULT_JQL)
+              print(f"  Using saved JQL from jql_config.json: {effective_jql}")
           else:
+              effective_jql = DEFAULT_JQL
               print(f"  Using default JQL: {effective_jql}")
+
           cfg = {
             "jira_url":               os.environ["JIRA_URL"],
             "email":                  os.environ["JIRA_EMAIL"],
@@ -113,7 +131,8 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add bug_dashboard.html index.html
-          # Only commit if the file actually changed
+          git add jql_config.json 2>/dev/null || true
+          # Only commit if anything actually changed
           git diff --cached --quiet || git commit -m "chore: refresh bug dashboard [skip ci]"
           git push
 
