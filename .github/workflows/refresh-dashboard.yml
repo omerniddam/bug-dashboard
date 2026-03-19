@@ -5,11 +5,15 @@ on:
   schedule:
     - cron: '0 7 * * *'
 
-  # Allow manual trigger — optionally pass a custom JQL from the dashboard UI
+  # Allow manual trigger — optionally pass a per-chart config override from the dashboard UI
   workflow_dispatch:
     inputs:
+      chart_override:
+        description: 'JSON: {"chartId":"c1","bug_jql":"...","resolved_statuses":["Done"],"months_of_history":6}'
+        required: false
+        default: ''
       bug_jql:
-        description: 'Override bug_jql filter (leave empty to use the default)'
+        description: '(Legacy) Override global bug_jql for all charts'
         required: false
         default: ''
 
@@ -50,34 +54,55 @@ jobs:
           JIRA_EMAIL:       ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN:   ${{ secrets.JIRA_API_TOKEN }}
           JIRA_PROXY_URL:   ${{ secrets.JIRA_PROXY_URL }}
+          CHART_OVERRIDE:   ${{ inputs.chart_override }}
           BUG_JQL_OVERRIDE: ${{ inputs.bug_jql }}
         run: |
           python3 - <<'EOF'
           import json, os
           from pathlib import Path
 
-          # Priority order for bug_jql:
-          #   1. Explicit override passed to this workflow run (from dashboard UI)
-          #   2. Previously saved override in jql_config.json (survives daily scheduled runs)
-          #   3. Hardcoded default
           DEFAULT_JQL = "(issuetype = Bug OR labels in (bug, jira_escalated)) and issuetype!=sub-task and creator=557058:3e2ef232-d5c4-4c0e-94b0-977a305ebaae"
           JQL_CONFIG_PATH = Path("jql_config.json")
 
-          jql_override = os.environ.get("BUG_JQL_OVERRIDE", "").strip()
+          # Load existing saved config (if any)
+          jql_config = {}
+          if JQL_CONFIG_PATH.exists():
+              try:
+                  jql_config = json.loads(JQL_CONFIG_PATH.read_text())
+              except Exception:
+                  jql_config = {}
 
+          # ── Handle per-chart override (from dashboard UI "Save & Refresh") ──
+          chart_override_raw = os.environ.get("CHART_OVERRIDE", "").strip()
+          if chart_override_raw:
+              try:
+                  override = json.loads(chart_override_raw)
+                  chart_id = override.get("chartId", "")
+                  valid_ids = {"c1","c2","c3","c4","c5","c6","c7","c9"}
+                  if chart_id in valid_ids:
+                      charts = jql_config.setdefault("charts", {})
+                      charts[chart_id] = {
+                          k: override[k]
+                          for k in ("bug_jql","resolved_statuses","months_of_history")
+                          if k in override
+                      }
+                      JQL_CONFIG_PATH.write_text(json.dumps(jql_config, indent=2))
+                      print(f"  Saved chart override for {chart_id}: {charts[chart_id]}")
+                  else:
+                      print(f"  Warning: unknown chartId '{chart_id}', skipping")
+              except json.JSONDecodeError as e:
+                  print(f"  Warning: invalid chart_override JSON — {e}")
+
+          # ── Handle legacy global bug_jql override ──
+          jql_override = os.environ.get("BUG_JQL_OVERRIDE", "").strip()
           if jql_override:
-              effective_jql = jql_override
-              print(f"  JQL override from workflow input: {jql_override}")
-              # Persist this override so future scheduled runs use it too
-              JQL_CONFIG_PATH.write_text(json.dumps({"bug_jql": jql_override}, indent=2))
-              print(f"  Saved to jql_config.json for future runs")
-          elif JQL_CONFIG_PATH.exists():
-              saved = json.loads(JQL_CONFIG_PATH.read_text())
-              effective_jql = saved.get("bug_jql", DEFAULT_JQL)
-              print(f"  Using saved JQL from jql_config.json: {effective_jql}")
-          else:
-              effective_jql = DEFAULT_JQL
-              print(f"  Using default JQL: {effective_jql}")
+              jql_config["bug_jql"] = jql_override
+              JQL_CONFIG_PATH.write_text(json.dumps(jql_config, indent=2))
+              print(f"  Saved global JQL override: {jql_override}")
+
+          # ── Determine effective global bug_jql ──
+          effective_jql = jql_config.get("bug_jql", DEFAULT_JQL)
+          print(f"  Global JQL: {effective_jql}")
 
           cfg = {
             "jira_url":               os.environ["JIRA_URL"],

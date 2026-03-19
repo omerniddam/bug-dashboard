@@ -397,10 +397,21 @@ def build_normalized_timeline(issues, days=182):
 
 # ─── HTML GENERATION ─────────────────────────────────────────────────────────
 
-def build_html(bugs, timeline, norm_timeline, config, generated_at):
+def build_html(bugs, timeline, norm_timeline, config, generated_at,
+               chart_bugs=None, chart_overrides=None):
     bugs_json          = json.dumps(bugs,          ensure_ascii=False)
     timeline_json      = json.dumps(timeline,      ensure_ascii=False)
     norm_timeline_json = json.dumps(norm_timeline, ensure_ascii=False)
+
+    # Per-chart data: bake into JS as CHART_BUGS assignments
+    chart_bugs_js = ""
+    if chart_bugs:
+        for cid, cbugs in chart_bugs.items():
+            chart_bugs_js += f"\nCHART_BUGS.{cid} = {json.dumps(cbugs, ensure_ascii=False)};"
+
+    # Per-chart saved configs (for pre-filling the edit modal)
+    chart_overrides_json = json.dumps(chart_overrides or {}, ensure_ascii=False)
+
     dash_cfg      = {
         "jira_url":         config["jira_url"],
         "email":            config.get("email", ""),
@@ -740,38 +751,77 @@ body:not(.edit-mode) .edit-only{{display:none!important}}
   </div>
 </div>
 
-<!-- JQL MODAL -->
+<!-- CHART EDIT MODAL (structured form) -->
 <div class="modal-overlay" id="jql-overlay">
-  <div class="modal">
+  <div class="modal" style="max-width:640px">
     <div class="modal-head">
-      <h2 id="jql-title">Query</h2>
+      <h2 id="jql-title">Edit Chart Query</h2>
       <button class="modal-close" onclick="closeModals()">×</button>
     </div>
     <div class="modal-body">
-      <p style="font-size:12px;color:#94a3b8;margin-bottom:10px">
-        The JQL below shows exactly what this chart queries. Copy it into Jira to verify results.
-        <strong>Apply Filter</strong> filters the pre-loaded data instantly (team/date).
-        <strong>Refresh from Jira</strong> triggers a full re-fetch via GitHub Actions (~2 min) and reloads the page.
+      <p style="font-size:12px;color:#94a3b8;margin-bottom:14px">
+        Edit the query for <strong>this chart only</strong>. Click <strong>Save &amp; Refresh</strong> to fetch fresh data from Jira (~2 min) — the page reloads automatically with updated results.<br>
+        Changes are saved permanently and survive daily rebuilds.
       </p>
-      <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
-        <button class="copy-btn" onclick="copyJql()">📋 Copy</button>
+
+      <!-- Bug filter -->
+      <div class="form-group">
+        <label>Bug Filter <span style="font-weight:400;color:#64748b;font-size:11px">(base JQL condition — project &amp; date are added automatically)</span></label>
+        <textarea id="jql-bug-filter" rows="3" oninput="updateJqlPreview()" style="width:100%;font-family:monospace;font-size:12px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:8px;resize:vertical"></textarea>
       </div>
-      <textarea class="jql-box" id="jql-text" style="width:100%;min-height:100px"></textarea>
-      <p class="jql-note" id="jql-note"></p>
+
+      <!-- Resolved statuses -->
+      <div class="form-group" style="margin-top:10px">
+        <label>Resolved Statuses <span style="font-weight:400;color:#64748b;font-size:11px">(comma-separated — what counts as "done" for this chart)</span></label>
+        <input type="text" id="jql-statuses" oninput="updateJqlPreview()" placeholder="Done, To be reviewed by the customer, Rejected"
+               style="width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:8px;font-size:13px">
+      </div>
+
+      <!-- Months of history -->
+      <div class="form-group" style="margin-top:10px;display:flex;align-items:center;gap:12px">
+        <label style="white-space:nowrap">Months of History</label>
+        <input type="number" id="jql-months" min="1" max="24" value="6" oninput="updateJqlPreview()"
+               style="width:72px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:8px;font-size:13px;text-align:center">
+        <span style="font-size:12px;color:#64748b">How far back data is fetched (1–24)</span>
+      </div>
+
+      <!-- JQL preview -->
+      <details style="margin-top:14px;border-top:1px solid #1e293b;padding-top:10px">
+        <summary style="cursor:pointer;color:#64748b;font-size:12px;user-select:none">Preview full JQL (reference)</summary>
+        <div style="margin-top:8px;display:flex;justify-content:flex-end;margin-bottom:4px">
+          <button class="copy-btn" onclick="copyJql()">📋 Copy</button>
+        </div>
+        <textarea class="jql-box" id="jql-text" readonly rows="5" style="width:100%;opacity:0.7;cursor:default"></textarea>
+      </details>
+
+      <!-- Team filter (instant, no Jira call) -->
       <div id="jql-filter-wrap" style="margin-top:12px;display:none">
         <div class="form-row" id="jql-filter-form"></div>
+        <button class="btn-ghost" id="jql-apply-btn" onclick="applyJqlFilter()" style="margin-top:8px">Apply Team Filter (instant)</button>
       </div>
+
+      <!-- GitHub token -->
+      <details id="jql-pat-details" style="margin-top:14px;border-top:1px solid #1e293b;padding-top:12px">
+        <summary style="cursor:pointer;color:#64748b;font-size:12px;user-select:none">GitHub Access Token (one-time setup)</summary>
+        <div style="margin-top:10px">
+          <div class="form-group">
+            <label>Personal Access Token</label>
+            <input type="password" id="jql-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+            <span class="jql-note">Needs <code>repo</code> + <code>workflow</code> scopes. Stored in your browser only. Generate at github.com/settings/tokens/new</span>
+          </div>
+        </div>
+      </details>
+      <div id="jql-status" class="gjql-status" style="margin-top:12px"></div>
     </div>
     <div class="modal-foot">
       <button class="btn-ghost" onclick="closeModals()">Close</button>
-      <button class="btn-ghost" id="jql-reset-btn" onclick="resetChartData(activeJql)" style="display:none;color:#f87171;border-color:#f87171">&#8629; Reset</button>
-      <button class="btn-ghost" id="jql-apply-btn" onclick="applyJqlFilter()" style="display:none">Apply Filter</button>
-      <button class="btn-primary" id="jql-refresh-btn" onclick="triggerChartRefresh()" style="display:none">&#8635; Refresh from Jira</button>
+      <button class="btn-ghost" id="jql-reset-btn" onclick="resetChartData(activeJql)" style="display:none;color:#f87171;border-color:#f87171">&#8629; Reset to Default</button>
+      <button class="btn-primary" id="jql-refresh-btn" onclick="saveAndRefreshChart()">&#8635; Save &amp; Refresh (~2 min)</button>
     </div>
   </div>
 </div>
 
-<!-- GLOBAL JQL MODAL -->
+<!-- GLOBAL JQL MODAL (kept for legacy / global changes) -->
 <div class="modal-overlay" id="gjql-overlay">
   <div class="modal" style="width:620px">
     <button class="modal-close" onclick="closeModals()">×</button>
@@ -815,6 +865,10 @@ const SAVED_JQLS = {{}};
 
 // Per-chart overridden datasets fetched via custom JQL (null = use default ALL_BUGS)
 const CHART_BUGS = {{c1:null, c2:null, c3:null, c4:null, c5:null, c6:null, c7:null, c9:null}};
+{chart_bugs_js}
+// Per-chart saved configs (bug_jql, resolved_statuses, months_of_history)
+// populated by the workflow when a chart has a saved override in jql_config.json
+const CHART_OVERRIDES = {chart_overrides_json};
 
 const CONFIGS = {{
   c1: {{ type:'bar', horizontal:false, sortBy:'value', colorScheme:'indigo' }},
@@ -1698,49 +1752,53 @@ function applyEdit(){{
 }}
 
 // ─── JQL MODAL ────────────────────────────────────────────────────────────────
+
+// Build the reference JQL for a chart using its saved config (or global defaults)
 function buildJql(chartId){{
-  const p = DASH_CFG.projects;
-  const rs = DASH_CFG.resolved_statuses.map(s=>`"${{s}}"`).join(', ');
-  const bq = DASH_CFG.bug_jql;
-  const ms = `"${{selYear}}-${{String(selMonth).padStart(2,'0')}}-01"`;
-  const me = `"${{isoDate(new Date(selYear,selMonth,0))}}"`;
-  const days = (DASH_CFG.months_of_history || 6) * 31;
-  const base = `${{bq}}\nAND project in (${{p}})\nAND created >= -${{days}}d`;
+  const co   = CHART_OVERRIDES[chartId] || {{}};
+  const bq   = co.bug_jql || DASH_CFG.bug_jql;
+  const p    = DASH_CFG.projects;
+  const rs   = (co.resolved_statuses || DASH_CFG.resolved_statuses).map(s=>`"${{s}}"`).join(', ');
+  const days = (co.months_of_history || DASH_CFG.months_of_history || 6) * 31;
+  const ms   = `"${{selYear}}-${{String(selMonth).padStart(2,'0')}}-01"`;
+  const me   = `"${{isoDate(new Date(selYear,selMonth,0))}}"`;
+  const base = `${{bq}}\\nAND project in (${{p}})\\nAND created >= -${{days}}d`;
   const jqls = {{
-    c1: `${{base}}\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\nORDER BY cf[10032] ASC`,
-    c2: `${{base}}\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\nORDER BY assignee ASC`,
-    c3: `${{base}}\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\nORDER BY created ASC`,
-    c4: `${{base}}\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\nORDER BY priority ASC`,
-    c5: `${{base}}\nORDER BY cf[10032] ASC\n-- Open:  AND resolution is EMPTY\n-- Closed: AND resolution is not EMPTY`,
-    c6: `${{base}}\n-- Open on date D: created <= D AND (resolution is EMPTY OR resolutiondate > D)\nORDER BY created ASC`,
-    c7: `${{base}}\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\nORDER BY cf[10032] ASC, priority ASC`,
+    c1: `${{base}}\\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\\nORDER BY cf[10032] ASC`,
+    c2: `${{base}}\\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\\nORDER BY assignee ASC`,
+    c3: `${{base}}\\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\\nORDER BY created ASC`,
+    c4: `${{base}}\\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\\nORDER BY priority ASC`,
+    c5: `${{base}}\\nORDER BY cf[10032] ASC\\n-- Open: AND resolution is EMPTY\\n-- Closed: AND resolution is not EMPTY`,
+    c6: `${{base}}\\n-- Open on date D: created <= D AND (resolution is EMPTY OR resolutiondate > D)\\nORDER BY created ASC`,
+    c7: `${{base}}\\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\\nORDER BY cf[10032] ASC, priority ASC`,
   }};
   return jqls[chartId] || '';
 }}
 
 function openJql(chartId){{
   activeJql = chartId;
-  const titles = {{c1:'Chart 1 JQL', c2:'Chart 2 JQL', c3:'Chart 3 JQL',
-    c4:'Chart 4 JQL', c5:'Chart 5 JQL', c6:'Chart 6 JQL',
-    c7:'Chart 7 JQL', c9:'Chart 9 JQL'}};
-  document.getElementById('jql-title').textContent = titles[chartId];
-  // Use saved JQL if user has previously edited it, otherwise build from current state
-  document.getElementById('jql-text').value = SAVED_JQLS[chartId] || buildJql(chartId);
-  document.getElementById('jql-note').textContent =
-    'Edit the JQL and click "Apply & Re-fetch" to pull fresh data from Jira. ' +
-    'Your JQL edits are saved automatically and persist when you reopen this page.';
+  const labels = {{c1:'Chart 1',c2:'Chart 2',c3:'Chart 3',c4:'Chart 4',c5:'Chart 5',c6:'Chart 6',c7:'Chart 7',c9:'Chart 9'}};
+  document.getElementById('jql-title').textContent = `Edit ${{labels[chartId] || chartId}} Query`;
 
-  // Show filter controls for c1-c5 (team multi-select)
+  // Pre-fill structured form from saved CHART_OVERRIDES or global DASH_CFG defaults
+  const co = CHART_OVERRIDES[chartId] || {{}};
+  document.getElementById('jql-bug-filter').value = co.bug_jql || DASH_CFG.bug_jql || '';
+  document.getElementById('jql-statuses').value   = (co.resolved_statuses || DASH_CFG.resolved_statuses || []).join(', ');
+  document.getElementById('jql-months').value     = co.months_of_history  || DASH_CFG.months_of_history  || 6;
+
+  // Populate JQL preview
+  document.getElementById('jql-text').value = buildJql(chartId);
+
+  // Team filter (instant, no Jira call)
   const cf = CUSTOM_FILTERS[chartId];
   const allTeams = [...new Set(ALL_BUGS.map(b=>b.team))].sort();
   const filterWrap = document.getElementById('jql-filter-wrap');
   const filterForm = document.getElementById('jql-filter-form');
-
   if (['c1','c2','c3','c4','c5','c7'].includes(chartId)) {{
     filterWrap.style.display = 'block';
     filterForm.innerHTML = `<div class="form-group" style="grid-column:1/-1">
-      <label>Filter by Team (hold Ctrl/Cmd to multi-select — applies instantly without re-fetch)</label>
-      <select id="f-teams" multiple style="min-height:100px">
+      <label>Filter by Team <span style="font-weight:400;color:#64748b;font-size:11px">(Ctrl/Cmd for multi-select — instant, no Jira call)</span></label>
+      <select id="f-teams" multiple style="min-height:80px;width:100%">
         ${{allTeams.map(t=>`<option value="${{t}}" ${{(cf.teams||[]).includes(t)?'selected':''}}>${{t}}</option>`).join('')}}
       </select>
     </div>`;
@@ -1748,64 +1806,112 @@ function openJql(chartId){{
     filterWrap.style.display = 'none';
   }}
 
-  // Show Apply + Refresh buttons; show Reset only if chart has custom data
-  document.getElementById('jql-apply-btn').style.display = '';
-  document.getElementById('jql-refresh-btn').style.display = '';
+  // Reset button only if chart has a saved override
   const resetBtn = document.getElementById('jql-reset-btn');
-  resetBtn.style.display = CHART_BUGS[chartId] ? '' : 'none';
+  resetBtn.style.display = (CHART_BUGS[chartId] || CHART_OVERRIDES[chartId]) ? '' : 'none';
 
-  // Clear any previous error
-  const errBox = document.getElementById('jql-error-box');
-  if (errBox) errBox.remove();
+  // Pre-fill saved GitHub PAT
+  try {{
+    const saved = localStorage.getItem('gh_pat');
+    if (saved)  document.getElementById('jql-token').value = saved;
+    if (!saved) document.getElementById('jql-pat-details').open = true;
+  }} catch(e) {{}}
+
+  // Clear previous status message
+  _jqlStatus('', '');
 
   document.getElementById('jql-overlay').classList.add('open');
 }}
 
+// Live-update the JQL preview textarea as the user edits the fields
+function updateJqlPreview(){{
+  if (!activeJql) return;
+  const bq     = (document.getElementById('jql-bug-filter').value || '').trim();
+  const stStr  = (document.getElementById('jql-statuses').value  || '').trim();
+  const months = parseInt(document.getElementById('jql-months').value) || 6;
+  const p      = DASH_CFG.projects;
+  const days   = months * 31;
+  const ms     = `"${{selYear}}-${{String(selMonth).padStart(2,'0')}}-01"`;
+  const me     = `"${{isoDate(new Date(selYear,selMonth,0))}}"`;
+  const base   = `${{bq || '(your filter)' }}\\nAND project in (${{p}})\\nAND created >= -${{days}}d`;
+  document.getElementById('jql-text').value =
+    `${{base}}\\nAND resolutiondate >= ${{ms}} AND resolutiondate <= ${{me}}\\nORDER BY cf[10032] ASC`;
+}}
+
+// Apply team filter instantly (no Jira call needed — data already loaded)
 function applyJqlFilter(){{
-  const chartId = activeJql;
-  const newJql  = (document.getElementById('jql-text').value || '').trim();
-
-  // Save team filter selection (instant, no re-fetch)
   const sel = document.getElementById('f-teams');
-  if (sel) {{
-    CUSTOM_FILTERS[chartId].teams = [...sel.selectedOptions].map(o=>o.value);
-  }}
-
-  // Save JQL to memory + localStorage for display next time
-  if (newJql) {{
-    SAVED_JQLS[chartId] = newJql;
-    try {{ localStorage.setItem('jql_' + chartId, newJql); }} catch(e){{}}
-  }}
-
+  if (sel) CUSTOM_FILTERS[activeJql].teams = [...sel.selectedOptions].map(o=>o.value);
   closeModals();
   renderAll();
 }}
 
-// Trigger a full GitHub Actions refresh with the current chart's base JQL
-function triggerChartRefresh() {{
-  // Extract the base JQL from the chart JQL textarea (the part before the auto-generated clauses).
-  // buildJql() always appends "AND project in (...)" on a new line after the bug_jql —
-  // everything before that line IS the base filter that should be sent to the workflow.
-  const chartJql = (document.getElementById('jql-text').value || '').trim();
-  let baseJql = '';
-  const jqlLines = chartJql.split('\\n');
-  const cutIdx  = jqlLines.findIndex(l => /^AND project in /i.test(l.trim()));
-  baseJql = (cutIdx > 0) ? jqlLines.slice(0, cutIdx).join('\\n').trim() : '';
-  // Fall back to saved global JQL or the baked-in default
-  const savedJql = (() => {{ try {{ return localStorage.getItem('global_jql'); }} catch(e) {{ return null; }} }})();
-  document.getElementById('gjql-text').value = baseJql || savedJql || DASH_CFG.bug_jql || '';
-  const st = document.getElementById('gjql-status');
-  st.className = 'gjql-status'; st.textContent = ''; st.style.display = 'none';
-  const btn = document.getElementById('gjql-apply-btn');
-  btn.disabled = false; btn.textContent = 'Trigger Refresh';
-  // Pre-fill saved PAT
+// ── Save chart config + trigger GitHub Actions workflow ────────────────────────
+async function saveAndRefreshChart(){{
+  const chartId  = activeJql;
+  const bugFilter = (document.getElementById('jql-bug-filter').value || '').trim();
+  const statusStr = (document.getElementById('jql-statuses').value  || '').trim();
+  const months    = parseInt(document.getElementById('jql-months').value) || 6;
+  const token     = (document.getElementById('jql-token').value || '').trim();
+  const repo      = DASH_CFG.github_repo     || '';
+  const workflow  = DASH_CFG.github_workflow || 'refresh-dashboard.yml';
+
+  if (!bugFilter) {{ _jqlStatus('error', 'Bug filter cannot be empty.'); return; }}
+  if (!token)     {{ _jqlStatus('error', 'GitHub token required — expand "GitHub Access Token" above.'); document.getElementById('jql-pat-details').open = true; return; }}
+  if (!repo)      {{ _jqlStatus('error', 'GitHub repo not configured in dashboard.'); return; }}
+
+  const resolvedStatuses = statusStr
+    ? statusStr.split(',').map(s=>s.trim()).filter(Boolean)
+    : (DASH_CFG.resolved_statuses || []);
+
+  const override = {{
+    chartId,
+    bug_jql:           bugFilter,
+    resolved_statuses: resolvedStatuses,
+    months_of_history: months,
+  }};
+
+  try {{ localStorage.setItem('gh_pat', token); }} catch(e) {{}}
+
+  const btn = document.getElementById('jql-refresh-btn');
+  btn.disabled = true; btn.textContent = 'Triggering...';
+  _jqlStatus('info', 'Contacting GitHub...');
+
+  const startedAt = new Date().toISOString();
   try {{
-    const saved = localStorage.getItem('gh_pat');
-    if (saved) document.getElementById('gjql-token').value = saved;
-    if (!saved) document.getElementById('gjql-pat-details').open = true;
-  }} catch(e) {{}}
-  closeModals();
-  document.getElementById('gjql-overlay').classList.add('open');
+    const apiUrl = 'https://api.github.com/repos/' + repo + '/actions/workflows/' + workflow + '/dispatches';
+    const res = await fetch(apiUrl, {{
+      method: 'POST',
+      headers: {{ 'Authorization': 'token ' + token, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{ ref: 'main', inputs: {{ chart_override: JSON.stringify(override) }} }})
+    }});
+    if (res.status === 204) {{
+      btn.textContent = 'Running...';
+      _jqlStatus('info', '✅ Workflow triggered! Fetching data from Jira (~2 min). Page reloads automatically.');
+      _pollAndReload(token, repo, workflow, startedAt, 'jql-status');
+    }} else {{
+      let detail = '';
+      try {{
+        if      (res.status === 401) detail = ' — Token invalid or expired.';
+        else if (res.status === 403) detail = ' — Token lacks "workflow" scope.';
+        else if (res.status === 404) detail = ' — Repo or workflow not found.';
+        else {{ const b = await res.json(); detail = b.message ? ' — ' + b.message : ''; }}
+      }} catch(e) {{}}
+      _jqlStatus('error', 'GitHub error: HTTP ' + res.status + detail);
+      btn.disabled = false; btn.textContent = '↻ Save & Refresh (~2 min)';
+    }}
+  }} catch(netErr) {{
+    _jqlStatus('error', 'Network error: ' + netErr.message);
+    btn.disabled = false; btn.textContent = '↻ Save & Refresh (~2 min)';
+  }}
+}}
+
+function _jqlStatus(type, msg){{
+  const el = document.getElementById('jql-status');
+  if (!el) return;
+  el.className = 'gjql-status' + (type ? ' ' + type : '');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
 }}
 
 function resetChartData(chartId){{
@@ -2149,13 +2255,23 @@ function openGlobalJql() {{
 
 function _gjqlStatus(type, msg) {{
   const el = document.getElementById('gjql-status');
+  if (!el) return;
   el.className = 'gjql-status ' + type;
   el.textContent = msg;
   el.style.display = msg ? 'block' : 'none';
 }}
 
-// Poll GitHub Actions for workflow completion, then auto-reload
-async function _pollAndReload(token, repo, workflow, startedAt) {{
+// Poll GitHub Actions for workflow completion, then auto-reload.
+// statusElId: DOM id of the status element to update while waiting.
+async function _pollAndReload(token, repo, workflow, startedAt, statusElId) {{
+  statusElId = statusElId || 'gjql-status';
+  function _setStatus(type, msg) {{
+    const el = document.getElementById(statusElId);
+    if (!el) return;
+    el.className = 'gjql-status ' + type;
+    el.textContent = msg;
+    el.style.display = msg ? 'block' : 'none';
+  }}
   const apiUrl = 'https://api.github.com/repos/' + repo + '/actions/workflows/' + workflow + '/runs?event=workflow_dispatch&per_page=5';
   let attempts = 0;
   const maxAttempts = 24; // 4 minutes max (24 x 10s)
@@ -2163,7 +2279,7 @@ async function _pollAndReload(token, repo, workflow, startedAt) {{
     attempts++;
     const remaining = Math.max(0, (maxAttempts - attempts) * 10);
     const m = Math.floor(remaining / 60), s = remaining % 60;
-    _gjqlStatus('info', 'Workflow running... ~' + m + ':' + String(s).padStart(2,'0') + ' remaining. Page will reload automatically.');
+    _setStatus('info', 'Workflow running... ~' + m + ':' + String(s).padStart(2,'0') + ' remaining. Page will reload automatically.');
     try {{
       const res = await fetch(apiUrl, {{
         headers: {{ 'Authorization': 'token ' + token, 'Accept': 'application/vnd.github.v3+json' }}
@@ -2173,7 +2289,7 @@ async function _pollAndReload(token, repo, workflow, startedAt) {{
         const run = (data.workflow_runs || []).find(r => r.created_at >= startedAt);
         if (run && run.status === 'completed') {{
           clearInterval(interval);
-          _gjqlStatus('success', 'Done! Reloading dashboard...');
+          _setStatus('success', '✅ Done! Reloading dashboard...');
           setTimeout(() => location.reload(true), 1500);
           return;
         }}
@@ -2181,7 +2297,7 @@ async function _pollAndReload(token, repo, workflow, startedAt) {{
     }} catch(e) {{}}
     if (attempts >= maxAttempts) {{
       clearInterval(interval);
-      _gjqlStatus('info', 'Workflow is taking longer than expected. Reload the page in a moment to see updated data.');
+      _setStatus('info', 'Workflow is taking longer than expected. Reload the page manually to see updated data.');
     }}
   }}, 10000);
 }}
@@ -2357,9 +2473,45 @@ def main():
                       f, ensure_ascii=False)
         print(f"  Cache saved → {CACHE_PATH.name}")
 
+    # ── Per-chart custom data (from jql_config.json) ────────────────────────
+    JQL_CONFIG_PATH = SCRIPT_DIR / "jql_config.json"
+    chart_overrides = {}
+    if JQL_CONFIG_PATH.exists():
+        try:
+            loaded = json.loads(JQL_CONFIG_PATH.read_text())
+            chart_overrides = loaded.get("charts", {})
+        except Exception as e:
+            print(f"  Warning: Could not read jql_config.json: {e}")
+
+    chart_bugs = {}   # { "c1": [processed_bugs], ... }
+    VALID_CHART_IDS = {"c1","c2","c3","c4","c5","c6","c7","c9"}
+    for cid, ccfg in chart_overrides.items():
+        if cid not in VALID_CHART_IDS:
+            continue
+        c_days    = int(ccfg.get("months_of_history", cfg.get("months_of_history", 6))) * 31
+        c_bug_jql = ccfg.get("bug_jql", cfg.get("bug_jql", ""))
+        c_jql     = (
+            f"project in ({cfg.get('projects','OXDEV')}) "
+            f"AND {c_bug_jql} "
+            f"AND created >= -{c_days}d "
+            f"AND creator = 557058:3e2ef232-d5c4-4c0e-94b0-977a305ebaae "
+            f"ORDER BY created ASC"
+        )
+        c_cfg = {**cfg}
+        if "resolved_statuses" in ccfg:
+            c_cfg["resolved_statuses"] = ccfg["resolved_statuses"]
+        try:
+            print(f"\nFetching custom data for chart {cid}...")
+            c_raw = fetch_all(cfg, c_jql, fields, expand="changelog")
+            chart_bugs[cid] = process_issues(c_raw, c_cfg)
+            print(f"  → {len(chart_bugs[cid])} bugs for chart {cid}")
+        except Exception as e:
+            print(f"  ⚠  Failed to fetch data for chart {cid}: {e}")
+
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
     print("\nGenerating dashboard HTML...")
-    html = build_html(bugs, timeline, norm_timeline, cfg, generated_at)
+    html = build_html(bugs, timeline, norm_timeline, cfg, generated_at,
+                      chart_bugs=chart_bugs, chart_overrides=chart_overrides)
     with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"  Dashboard saved → {OUTPUT_HTML.name}")
